@@ -9,62 +9,25 @@ arg_tz = timezone(timedelta(hours=-3))
 
 @app.route('/')
 def home():
-    return "🤖 ¡Bot meteorológico sincronizado con gráficos oficiales exactos!"
+    return "🤖 Bot meteorológico Córdoba - API activa."
 
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
     now = datetime.now(arg_tz)
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
-    
-    # Cascada donde cada tuit tiene su imagen/gráfico real y único asociado correctamente
-    dimarco_feed = [
-        {
-            "id": 1,
-            "time": "Hace 2 horas",
-            "author": "Rafael Di Marco (@dimarcorafael)",
-            "text": "Las Palmas, traslasierra. Las ráfagas máximas hasta el momento fueron de 81,7 km/h",
-            # Gráfico oficial exacto de la estación de ráfagas en Las Palmas
-            "media_image": "https://i.imgur.com/8Z63Q9h.png", 
-            "interaction_summary": "💬 2 respuestas · 🔄 2 RT · ❤️ 590 Me gusta",
-            "user_replies": [
-                {"user": "@marcos_cba", "text": "¡Impresionante registro de viento por Traslasierra!"},
-                {"user": "@valeria_met", "text": "Atentos si esto se desplaza hacia el este y el Gran Córdoba."}
-            ]
-        },
-        {
-            "id": 2,
-            "time": "Hace 3 horas",
-            "author": "Rafael Di Marco (@dimarcorafael)",
-            "text": "Monitoreo de núcleos inestables ingresando al oeste provincial. Se mantiene la vigilancia sobre Altas Cumbres y Valle de Punilla.",
-            # Imagen de radar satelital específica para celdas inestables
-            "media_image": "https://i.imgur.com/3Z5V8b1.png",
-            "interaction_summary": "💬 14 respuestas · 🔄 19 RT · ❤️ 112 Me gusta",
-            "user_replies": [
-                {"user": "@clima_unvm", "text": "Gracias Rafa por el aviso temprano."},
-                {"user": "@diego_storm", "text": "Cielo cubriéndose rápido por Carlos Paz."}
-            ]
-        },
-        {
-            "id": 3,
-            "time": "Hace 5 horas",
-            "author": "Rafael Di Marco (@dimarcorafael)",
-            "text": "Informe matutino: Temperaturas elevadas y aumento de la humedad relativa. Condiciones apremiantes para la formación de tormentas aisladas hacia la tarde.",
-            # Sin imagen adjunta, tuit de texto puro
-            "media_image": None,
-            "interaction_summary": "💬 8 respuestas · 🔄 15 RT · ❤️ 94 Me gusta",
-            "user_replies": [
-                {"user": "@analia_cba", "text": "Muy pesado el ambiente hoy en la capital."}
-            ]
-        }
-    ]
 
+    # NOTA: estos datos de seguimiento de tormenta y alertas SMN siguen siendo
+    # valores fijos de ejemplo. Los tuits de @dimarcorafael ya NO se generan acá:
+    # se embeben en vivo directo desde X en el frontend (ver index.html).
+    # Cuando quieras, el siguiente paso es reemplazar este bloque por datos
+    # reales del SMN (alertas) en vez de texto fijo.
     data = {
         "smn_status": "Monitoreo activo",
         "alerts": [
             {
                 "title": "Sistema de Alerta Temprana - Córdoba Capital",
                 "severity": "Moderada / Seguimiento en Vivo",
-                "description": f"Sincronizado a las {now.strftime('%H:%M')} hs. Gráficos oficiales validados."
+                "description": f"Sincronizado a las {now.strftime('%H:%M')} hs."
             }
         ],
         "storm_tracking": {
@@ -78,7 +41,6 @@ def live_weather():
             "wind_speed": "Ráfagas de hasta 81.7 km/h en origen",
             "accumulated_rain": "Variable"
         },
-        "dimarco_tweets": dimarco_feed,
         "last_update": current_time_str
     }
     return jsonify(data)

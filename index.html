@@ -15,6 +15,10 @@
         .metric { background: #0f172a; padding: 10px; border-radius: 8px; font-size: 0.9rem; }
         .metric span { display: block; color: #94a3b8; font-size: 0.75rem; }
         
+        /* Alerta de Granizo Específica para Capital */
+        .hail-alert-banner { display: none; background: linear-gradient(135deg, #ef4444, #b91c1c); color: white; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center; font-weight: bold; animation: pulse-alert 2s infinite; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5); }
+        @keyframes pulse-alert { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+
         /* Contenedor de Imagen Satelital / Radar */
         .sat-container { position: relative; width: 100%; height: 260px; border-radius: 8px; overflow: hidden; background: #0b0f19; border: 1px solid #334155; }
         .sat-container iframe { width: 100%; height: 100%; border: none; }
@@ -37,6 +41,8 @@
         .reply-item { font-size: 0.8rem; margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 4px; }
         .reply-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
         .reply-user { color: #38bdf8; font-weight: bold; }
+        
+        .notif-btn { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -44,8 +50,15 @@
         <header>
             <h1>Clima Córdoba Pro</h1>
             <p>Gran Córdoba & Capital</p>
-            <span id="status-badge" class="badge">Sincronizado en Vivo</span>
+            <span id="status-badge" class="badge">Sincronizado en Vivo</span><br>
+            <button class="notif-btn" onclick="requestNotificationPermission()">🔔 Activar Alertas Push</button>
         </header>
+
+        <!-- Banner de Alerta Crítica (Solo Córdoba Capital + Granizo Moderado/Alto) -->
+        <div id="hailAlertBanner" class="hail-alert-banner">
+            ⚠️ ¡ALERTA DE GRANIZO EN CÓRDOBA CAPITAL! ⚠️<br>
+            <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Riesgo moderado/alto directo a la ciudad. Resguarde vehículos.</span>
+        </div>
 
         <!-- Imagen Satelital / Radar en Vivo -->
         <div class="card">
@@ -69,7 +82,7 @@
             </div>
             <div class="grid">
                 <div class="metric"><span>LLEGADA (ETA)</span><strong id="eta">--</strong></div>
-                <div class="metric"><span>GRANIZO</span><strong id="hail">--</strong></div>
+                <div class="metric"><span>GRANIZO</span><strong id="hail" style="color: #38bdf8;">--</strong></div>
                 <div class="metric"><span>VIENTO MÁX</span><strong id="wind">--</strong></div>
                 <div class="metric"><span>ACUMULADA</span><strong id="rain">--</strong></div>
             </div>
@@ -93,6 +106,29 @@
     <script>
         const API_URL = "https://clima-cordoba-bot.onrender.com/api/live-weather";
 
+        function requestNotificationPermission() {
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    if (permission === "granted") {
+                        alert("¡Alertas push activadas correctamente para tu celular!");
+                    } else {
+                        alert("Permiso de notificaciones denegado.");
+                    }
+                });
+            } else {
+                alert("Tu navegador no soporta notificaciones push.");
+            }
+        }
+
+        function sendPushNotification(title, bodyText) {
+            if ("Notification" in window && Notification.permission === "granted") {
+                new Notification(title, {
+                    body: bodyText,
+                    icon: "https://cdn-icons-png.flaticon.com/512/1146/1146869.png"
+                });
+            }
+        }
+
         async function fetchWeatherData() {
             try {
                 let res = await fetch(API_URL);
@@ -106,6 +142,25 @@
                 document.getElementById('hail').innerText = t.hail_probability;
                 document.getElementById('wind').innerText = t.wind_speed;
                 document.getElementById('rain').innerText = t.accumulated_rain;
+
+                // --- FILTRO INTELIGENTE: Granizo Moderado/Alto + Destino Córdoba Capital ---
+                let hailVal = t.hail_probability.toLowerCase();
+                let destVal = t.destination.toLowerCase();
+                let banner = document.getElementById('hailAlertBanner');
+
+                let isSevereHail = hailVal.includes("moderada") || hailVal.includes("alta") || hailVal.includes("severa");
+                let isTargetCapital = destVal.includes("capital") || destVal.includes("córdoba capital");
+
+                if (isSevereHail && isTargetCapital) {
+                    banner.style.display = "block";
+                    document.getElementById('hail').style.color = "#ef4444";
+                    
+                    // Disparar notificación push dirigida a la capital
+                    sendPushNotification("⚠️ ALERTA DE GRANIZO EN CÓRDOBA CAPITAL", "Probabilidad: " + t.hail_probability + " | Llegada estimada: " + t.eta_minutes);
+                } else {
+                    banner.style.display = "none";
+                    document.getElementById('hail').style.color = "#38bdf8";
+                }
 
                 let smnHtml = "";
                 data.alerts.forEach(a => {
@@ -148,7 +203,6 @@
             }
         }
 
-        // Función para alternar la visibilidad de las respuestas
         function toggleReplies(id) {
             let box = document.getElementById('replies-' + id);
             if (box.style.display === 'block') {

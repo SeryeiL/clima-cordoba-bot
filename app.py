@@ -58,7 +58,7 @@ def fetch_dimarco_tweets():
             root = ET.fromstring(response.content)
             tweets = []
             for item in root.findall('.//item')[:4]:
-                title = item.find('title').text if item.find('title'] is not None else ""
+                title = item.find('title').text if item.find('title') is not None else ""
                 pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
                 tweets.append({
                     "author": "Rafael Di Marco (@dimarcorafael)",

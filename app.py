@@ -47,11 +47,11 @@ def live_weather():
             {
                 "time": "Hace 2 horas",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Respuesta a @usuario_cba: Sí, se esperan marcas térmicas elevadas antes del ingreso del frente húmedo hacia la tarde.",
+                "text": "Respuesta a seguidor: Sí, se esperan marcas térmicas elevadas antes del ingreso del frente húmedo hacia la tarde en todo el Gran Córdoba.",
                 "interaction": "💬 5 respuestas · 🔄 4 RT · ❤️ 28 Me gusta"
             }
         ],
-        "last_update": "02/10/2026 15:30:00"
+        "last_update": "02/10/2026 15:45:00"
     }
     return jsonify(data)
 

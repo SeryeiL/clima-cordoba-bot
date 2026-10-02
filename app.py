@@ -23,10 +23,12 @@ def live_weather():
             }
         ],
         "storm_trajectory": {
-            "status": "Monitoreando celdas en desplazamiento",
-            "origin": "Sierras Chicas / Gran Córdoba",
+            "status": "Avanzando hacia el este",
+            "origin": "Sierras Chicas (Calera / Argüello Norte)",
             "destination": "Córdoba Capital",
-            "eta_minutes": "30-40 min",
+            "route_steps": ["Sierras Chicas", "Zona Noroeste (Argüello/Saldán)", "Córdoba Capital (Centro/Nueva Cba)"],
+            "eta_minutes": 35,  # Minutos exactos para cálculos dinámicos
+            "eta_display": "35 min",
             "hail_probability": "Moderada (Zonas Altas)",
             "wind_speed": "38 km/h (Ráfagas)",
             "accumulated_rain": "14 mm (Estimado)"
@@ -40,8 +42,7 @@ def live_weather():
                 "interaction_summary": "💬 18 respuestas · 🔄 24 RT · ❤️ 95 Me gusta",
                 "user_replies": [
                     {"user": "@marcos_cba", "text": "Acá por Villa Allende se nubló de golpe y sopla viento fuerte."},
-                    {"user": "@valeria_met", "text": "¡Impresionante cómo oscureció hacia el oeste en Mendiolaza!"},
-                    {"user": "@juancruz92", "text": "¿Hay riesgo de granizo mediano para zona norte?"}
+                    {"user": "@valeria_met", "text": "¡Impresionante cómo oscureció hacia el oeste en Mendiolaza!"}
                 ]
             },
             {
@@ -51,19 +52,7 @@ def live_weather():
                 "text": "Respuesta a consulta de seguidores: Se mantiene la probabilidad de ráfagas sectorizadas hacia la tarde. Precaución en rutas.",
                 "interaction_summary": "💬 9 respuestas · 🔄 12 RT · ❤️ 51 Me gusta",
                 "user_replies": [
-                    {"user": "@clima_unvm", "text": "Gracias Rafa por el aviso, atento a las rutas provinciales."},
-                    {"user": "@santiago_ok", "text": "¿Afectará también a la zona sur de la capital?"}
-                ]
-            },
-            {
-                "id": 3,
-                "time": "Hace 1 hora",
-                "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Inestabilidad marcada en toda la región centro y norte. Seguimiento satelital en vivo de celdas aisladas.",
-                "interaction": "💬 15 respuestas · 🔄 30 RT · ❤️ 120 Me gusta",
-                "user_replies": [
-                    {"user": "@analia_cba", "text": "¡Excelente seguimiento como siempre! Muy caluroso por Nueva Córdoba."},
-                    {"user": "@diego_storm", "text": "Esperando el ingreso del frente fresco por acá."}
+                    {"user": "@clima_unvm", "text": "Gracias Rafa por el aviso, atento a las rutas provinciales."}
                 ]
             }
         ],

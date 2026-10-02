@@ -36,14 +36,16 @@
         .timeline-label { font-size: 0.7rem; color: #94a3b8; margin-top: 6px; max-width: 90px; }
         .timeline-step.active .timeline-label { color: #f8fafc; font-weight: bold; }
 
-        /* Estilo cascada de tuits y archivos multimedia */
+        /* Estilo cascada de tuits y gráficos multimedia */
         .tweet-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
         .tweet-time { font-size: 0.75rem; color: #94a3b8; }
         .tweet-text { font-size: 0.9rem; margin: 6px 0; }
-        .tweet-media { margin-top: 8px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; max-height: 250px; background: #000; }
-        .tweet-media img { width: 100%; height: auto; display: block; object-fit: cover; }
         
-        .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 6px; cursor: pointer; transition: color 0.2s; display: flex; justify-content: space-between; align-items: center; }
+        /* Contenedor visual optimizado para gráficos e imágenes de tuits */
+        .tweet-media { margin-top: 10px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #000; max-height: 280px; }
+        .tweet-media img { width: 100%; height: auto; display: block; object-fit: cover; max-height: 280px; }
+        
+        .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 10px; border-top: 1px solid #1e293b; padding-top: 6px; cursor: pointer; transition: color 0.2s; display: flex; justify-content: space-between; align-items: center; }
         .tweet-interaction:hover { color: #7dd3fc; }
         
         .replies-box { display: none; margin-top: 10px; background: #131c31; border-radius: 6px; padding: 8px; border: 1px dashed #334155; }
@@ -102,9 +104,9 @@
             <div id="smn-alerts">Cargando alertas...</div>
         </div>
 
-        <!-- Tuits en Cascada con Multimedia e Interacciones -->
+        <!-- Cascada de Tuits con Gráficos y Multimedia -->
         <div class="card">
-            <h3>Reportes & Multimedia @dimarcorafael</h3>
+            <h3>Reportes & Gráficos @dimarcorafael</h3>
             <div id="dimarco-feed">Cargando cascada de tuits...</div>
         </div>
 
@@ -174,9 +176,10 @@
                 let dimarcoHtml = "";
                 if (data.dimarco_tweets && data.dimarco_tweets.length > 0) {
                     data.dimarco_tweets.forEach(tw => {
+                        // Renderizado seguro del contenedor de gráficos/imágenes
                         let mediaHtml = "";
                         if (tw.media_image) {
-                            mediaHtml = `<div class="tweet-media"><img src="${tw.media_image}" alt="Gráfico o radar meteorológico"></div>`;
+                            mediaHtml = `<div class="tweet-media"><img src="${tw.media_image}" alt="Gráfico o radar oficial"></div>`;
                         }
 
                         let repliesHtml = "";

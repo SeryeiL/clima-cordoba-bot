@@ -33,22 +33,38 @@ def live_weather():
         },
         "dimarco_tweets": [
             {
+                "id": 1,
                 "time": "Hace 10 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
                 "text": "Actualización de radar: Núcleos con actividad eléctrica ingresando al oeste provincial con desplazamiento hacia el Gran Córdoba.",
-                "interaction": "💬 18 respuestas · 🔄 24 RT · ❤️ 95 Me gusta"
+                "interaction_summary": "💬 18 respuestas · 🔄 24 RT · ❤️ 95 Me gusta",
+                "user_replies": [
+                    {"user": "@marcos_cba", "text": "Acá por Villa Allende se nubló de golpe y sopla viento fuerte."},
+                    {"user": "@valeria_met", "text": "¡Impresionante cómo oscureció hacia el oeste en Mendiolaza!"},
+                    {"user": "@juancruz92", "text": "¿Hay riesgo de granizo mediano para zona norte?"}
+                ]
             },
             {
+                "id": 2,
                 "time": "Hace 40 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
                 "text": "Respuesta a consulta de seguidores: Se mantiene la probabilidad de ráfagas sectorizadas hacia la tarde. Precaución en rutas.",
-                "interaction": "💬 9 respuestas · 🔄 12 RT · ❤️ 51 Me gusta"
+                "interaction_summary": "💬 9 respuestas · 🔄 12 RT · ❤️ 51 Me gusta",
+                "user_replies": [
+                    {"user": "@clima_unvm", "text": "Gracias Rafa por el aviso, atento a las rutas provinciales."},
+                    {"user": "@santiago_ok", "text": "¿Afectará también a la zona sur de la capital?"}
+                ]
             },
             {
+                "id": 3,
                 "time": "Hace 1 hora",
                 "author": "Rafael Di Marco (@dimarcorafael)",
                 "text": "Inestabilidad marcada en toda la región centro y norte. Seguimiento satelital en vivo de celdas aisladas.",
-                "interaction": "💬 15 respuestas · 🔄 30 RT · ❤️ 120 Me gusta"
+                "interaction": "💬 15 respuestas · 🔄 30 RT · ❤️ 120 Me gusta",
+                "user_replies": [
+                    {"user": "@analia_cba", "text": "¡Excelente seguimiento como siempre! Muy caluroso por Nueva Córdoba."},
+                    {"user": "@diego_storm", "text": "Esperando el ingreso del frente fresco por acá."}
+                ]
             }
         ],
         "last_update": current_time_str

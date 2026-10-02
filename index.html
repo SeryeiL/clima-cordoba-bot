@@ -99,6 +99,23 @@
             <div id="smn-alerts">Cargando...</div>
         </div>
 
+        <!-- Índice de Riesgo de Granizo -->
+        <div class="card">
+            <h3>Índice de Riesgo de Granizo</h3>
+            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
+                Combina energía convectiva (CAPE), altura del nivel de congelamiento, condición del modelo y ráfagas.
+                Es una <strong>estimación propia</strong>, no una confirmación de que esté cayendo granizo.
+            </p>
+            <div id="hail-index-bar-bg" style="background:#0b0f19; border:1px solid #334155; border-radius:8px; height:14px; overflow:hidden; margin: 10px 0 6px 0;">
+                <div id="hail-index-bar" style="height:100%; width:0%; background:#10b981; transition: width 0.4s, background 0.4s;"></div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <strong id="hail-index-label" style="font-size:1rem;">--</strong>
+                <span id="hail-index-score" style="font-size:0.8rem; color:#94a3b8;">--/100</span>
+            </div>
+            <ul id="hail-index-factors" style="font-size:0.8rem; color:#cbd5e1; margin: 10px 0 0 0; padding-left: 18px;"></ul>
+        </div>
+
         <!-- Feed real de X embebido directo (oficial, en vivo, sin scraping) -->
         <div class="card x-feed-card">
             <div class="x-feed-header">
@@ -190,6 +207,26 @@
 
                 document.getElementById('smn-alerts').innerHTML =
                     `<div><strong>${c.condition_text}</strong><br><small style="color:#cbd5e1;">Humedad: ${c.humidity_pct}% · Viento sostenido: ${c.wind_speed_kmh} km/h</small></div>`;
+
+                // Índice de riesgo de granizo
+                let idx = data.hail_index;
+                if (idx) {
+                    const nivelColors = { "Muy bajo": "#10b981", "Bajo": "#38bdf8", "Moderado": "#eab308", "Alto": "#ef4444" };
+                    let color = nivelColors[idx.nivel] || "#10b981";
+                    document.getElementById('hail-index-bar').style.width = idx.score + "%";
+                    document.getElementById('hail-index-bar').style.background = color;
+                    document.getElementById('hail-index-label').innerText = idx.nivel;
+                    document.getElementById('hail-index-label').style.color = color;
+                    document.getElementById('hail-index-score').innerText = idx.score + "/100";
+
+                    let factorsHtml = "";
+                    if (idx.factores && idx.factores.length > 0) {
+                        idx.factores.forEach(f => { factorsHtml += `<li>${f}</li>`; });
+                    } else {
+                        factorsHtml = "<li>Sin factores de riesgo relevantes ahora</li>";
+                    }
+                    document.getElementById('hail-index-factors').innerHTML = factorsHtml;
+                }
 
                 document.getElementById('last-sync').innerText = "Última sincronización: " + data.last_update;
             } catch (e) {

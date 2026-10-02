@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 app = Flask(__name__)
 CORS(app)
 
-# Definimos la zona horaria de Argentina (UTC-3) de forma nativa
 arg_tz = timezone(timedelta(hours=-3))
 
 @app.route('/')
@@ -14,10 +13,12 @@ def home():
 
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
-    # Obtenemos la hora actual ajustada a Argentina sin requerir pytz
     now = datetime.now(arg_tz)
+    
+    # Calculamos la hora exacta de hace 1 hora para que coincida con el tuit de Di Marco
+    tweet_time = now - timedelta(hours=1)
+    tweet_time_str = f"Hace 1 hora ({tweet_time.strftime('%H:%M')} hs)"
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
-    current_hour_str = now.strftime("%H:%M")
     
     data = {
         "smn_status": "Monitoreo activo en vivo",
@@ -25,30 +26,30 @@ def live_weather():
             {
                 "title": "Sistema de Alerta Temprana - Córdoba Capital",
                 "severity": "Normal (Verde)",
-                "description": f"Monitoreo continuo actualizado a las {current_hour_str} hs. Sin avisos a corto plazo vigentes."
+                "description": f"Monitoreo continuo actualizado a las {now.strftime('%H:%M')} hs. Vigilar ráfagas sectorizadas en zonas serranas."
             }
         ],
         "storm_tracking": {
-            "current_location": "Estable - Sin núcleos severos en curso",
-            "trajectory_path": ["Sierras Chicas", "Zona Noroeste", "Córdoba Capital"],
+            "current_location": "Traslasierra / Las Palmas (Ráfagas intensas)",
+            "trajectory_path": ["Traslasierra", "Sierras Chicas", "Córdoba Capital"],
             "current_step_index": 0,
-            "eta_capital_minutes": 0,
-            "eta_display": "Sin amenazas",
+            "eta_capital_minutes": 45,
+            "eta_display": "45 min",
             "hail_confirmed": False,
-            "hail_probability": "Nula",
-            "wind_speed": "14 km/h (Sector Norte)",
-            "accumulated_rain": "0 mm"
+            "hail_probability": "Baja en Capital / Presente en Altas Cumbres",
+            "wind_speed": "81.7 km/h (Registrado en Las Palmas)",
+            "accumulated_rain": "8 mm"
         },
         "dimarco_tweets": [
             {
                 "id": 1,
-                "time": f"Actualizado hoy {current_hour_str} hs",
+                "time": tweet_time_str,
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Monitoreo en tiempo real: Jornada con estabilidad meteorológica en Córdoba Capital y Gran Córdoba. Seguimos atentos a cualquier cambio de inestabilidad hacia la tarde.",
-                "interaction_summary": "💬 6 respuestas · 🔄 11 RT · ❤️ 48 Me gusta",
+                "text": "Las Palmas, traslasierra. Las ráfagas máximas hasta el momento fueron de 81,7 km/h.",
+                "interaction_summary": "💬 1 respuesta · 🔄 0 RT · ❤️ 2 Me gusta",
                 "user_replies": [
-                    {"user": "@clima_cba", "text": "Gracias Rafa por la actualización en vivo."},
-                    {"user": "@valeria_met", "text": "Cielo despejado por zona norte."}
+                    {"user": "@marcos_cba", "text": "¡Impresionante registro de viento por Traslasierra!"},
+                    {"user": "@valeria_met", "text": "Atentos si esto se desplaza hacia el este."}
                 ]
             }
         ],

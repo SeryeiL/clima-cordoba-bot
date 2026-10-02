@@ -22,37 +22,37 @@ def live_weather():
                 "description": "Monitoreo permanente de núcleos convectivos aislados por altas temperaturas y humedad en las sierras."
             }
         ],
-        "storm_trajectory": {
-            "status": "Avanzando hacia el este",
-            "origin": "Sierras Chicas (Calera / Argüello Norte)",
-            "destination": "Córdoba Capital",
-            "route_steps": ["Sierras Chicas", "Zona Noroeste (Argüello/Saldán)", "Córdoba Capital (Centro/Nueva Cba)"],
-            "eta_minutes": 35,  # Minutos exactos para cálculos dinámicos
-            "eta_display": "35 min",
-            "hail_probability": "Moderada (Zonas Altas)",
-            "wind_speed": "38 km/h (Ráfagas)",
-            "accumulated_rain": "14 mm (Estimado)"
+        "storm_tracking": {
+            "current_location": "Sierras Chicas (Villa Allende / Mendiolaza)",
+            "trajectory_path": ["Sierras Chicas", "Zona Noroeste (Argüello / Argüello Norte)", "Córdoba Capital (Centro / Nueva Cba)"],
+            "current_step_index": 1, # 0: Sierras, 1: Noroeste, 2: Capital
+            "eta_capital_minutes": 25,
+            "eta_display": "25 min",
+            "hail_confirmed": True, # Cambiar a False si no hay reporte de granizo
+            "hail_probability": "Moderada (Zona Alta / Norte)",
+            "wind_speed": "42 km/h (Ráfagas)",
+            "accumulated_rain": "16 mm (Estimado)"
         },
         "dimarco_tweets": [
             {
                 "id": 1,
-                "time": "Hace 10 min",
+                "time": "Hace 5 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Actualización de radar: Núcleos con actividad eléctrica ingresando al oeste provincial con desplazamiento hacia el Gran Córdoba.",
-                "interaction_summary": "💬 18 respuestas · 🔄 24 RT · ❤️ 95 Me gusta",
+                "text": "¡Atención! Núcleo con fuerte actividad eléctrica y caída confirmada de granizo pequeño en zona de Sierras Chicas avanzando hacia Córdoba Capital.",
+                "interaction_summary": "💬 24 respuestas · 🔄 38 RT · ❤️️ 140 Me gusta",
                 "user_replies": [
-                    {"user": "@marcos_cba", "text": "Acá por Villa Allende se nubló de golpe y sopla viento fuerte."},
-                    {"user": "@valeria_met", "text": "¡Impresionante cómo oscureció hacia el oeste en Mendiolaza!"}
+                    {"user": "@marcos_cba", "text": "¡Confirmo granizo chico por Villa Allende bajando hacia Argüello!"},
+                    {"user": "@valeria_met", "text": "Cielo totalmente cerrado y granizo sectorizado en altura."}
                 ]
             },
             {
                 "id": 2,
-                "time": "Hace 40 min",
+                "time": "Hace 30 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Respuesta a consulta de seguidores: Se mantiene la probabilidad de ráfagas sectorizadas hacia la tarde. Precaución en rutas.",
-                "interaction_summary": "💬 9 respuestas · 🔄 12 RT · ❤️ 51 Me gusta",
+                "text": "Seguimiento satelital de celdas aisladas con desplazamiento este-noreste hacia el Gran Córdoba.",
+                "interaction_summary": "💬 12 respuestas · 🔄 15 RT · ❤️ 65 Me gusta",
                 "user_replies": [
-                    {"user": "@clima_unvm", "text": "Gracias Rafa por el aviso, atento a las rutas provinciales."}
+                    {"user": "@clima_unvm", "text": "Atentos a las ráfagas en ruta."}
                 ]
             }
         ],

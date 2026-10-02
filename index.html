@@ -26,10 +26,17 @@
         @keyframes pulse { 0% { transform: scale(0.95); opacity: 0.8; } 50% { transform: scale(1.3); opacity: 1; } 100% { transform: scale(0.95); opacity: 0.8; } }
 
         /* Estilo cascada de tuits */
-        .tweet-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; border-radius: 6px; margin-bottom: 10px; }
+        .tweet-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
         .tweet-time { font-size: 0.75rem; color: #94a3b8; }
         .tweet-text { font-size: 0.9rem; margin: 6px 0; }
-        .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 5px; border-top: 1px solid #1e293b; padding-top: 4px; }
+        .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 6px; cursor: pointer; transition: color 0.2s; }
+        .tweet-interaction:hover { color: #7dd3fc; }
+        
+        /* Sección desplegable de respuestas */
+        .replies-box { display: none; margin-top: 10px; background: #131c31; border-radius: 6px; padding: 8px; border: 1px dashed #334155; }
+        .reply-item { font-size: 0.8rem; margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 4px; }
+        .reply-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        .reply-user { color: #38bdf8; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -45,7 +52,6 @@
             <h3>Imagen Satelital & Radar (Córdoba)</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Seguimiento en tiempo real de nubosidad y precipitaciones.</p>
             <div class="sat-container">
-                <!-- Mapa meteorológico centrado en Córdoba Capital -->
                 <iframe src="https://embed.windy.com/embed2.html?lat=-31.413&lon=-64.181&zoom=8&level=surface&overlay=wind&menu=&message=&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=default&metricTemp=default&radarRange=-1"></iframe>
             </div>
         </div>
@@ -75,7 +81,7 @@
             <div id="smn-alerts">Cargando alertas...</div>
         </div>
 
-        <!-- Tuits en Cascada -->
+        <!-- Tuits en Cascada con Interacciones Desplegables -->
         <div class="card">
             <h3>Reportes & Interacciones @dimarcorafael</h3>
             <div id="dimarco-feed">Cargando cascada de tuits...</div>
@@ -110,12 +116,24 @@
                 let dimarcoHtml = "";
                 if (data.dimarco_tweets && data.dimarco_tweets.length > 0) {
                     data.dimarco_tweets.forEach(tw => {
-                        let interactionText = tw.interaction ? tw.interaction : "💬 Interacción en vivo";
+                        let repliesHtml = "";
+                        if (tw.user_replies && tw.user_replies.length > 0) {
+                            tw.user_replies.forEach(r => {
+                                repliesHtml += `<div class="reply-item"><span class="reply-user">${r.user}:</span> ${r.text}</div>`;
+                            });
+                        }
+
                         dimarcoHtml += `
                             <div class="tweet-card">
                                 <div class="tweet-time">${tw.time} - <strong>${tw.author}</strong></div>
                                 <div class="tweet-text">${tw.text}</div>
-                                <div class="tweet-interaction">${interactionText}</div>
+                                <div class="tweet-interaction" onclick="toggleReplies(${tw.id})">
+                                    👆 ${tw.interaction_summary} (Ver respuestas)
+                                </div>
+                                <div id="replies-${tw.id}" class="replies-box">
+                                    <p style="margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; font-weight: bold;">Respuestas de seguidores:</p>
+                                    ${repliesHtml}
+                                </div>
                             </div>`;
                     });
                 } else {
@@ -127,6 +145,16 @@
             } catch (e) {
                 document.getElementById('status-badge').innerText = "Error de conexión";
                 document.getElementById('status-badge').style.background = "#dc2626";
+            }
+        }
+
+        // Función para alternar la visibilidad de las respuestas
+        function toggleReplies(id) {
+            let box = document.getElementById('replies-' + id);
+            if (box.style.display === 'block') {
+                box.style.display = 'none';
+            } else {
+                box.style.display = 'block';
             }
         }
 

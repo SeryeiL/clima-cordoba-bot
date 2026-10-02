@@ -1,22 +1,21 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
-from datetime import datetime
-import pytz
+from datetime import datetime, timedelta, timezone
 
 app = Flask(__name__)
 CORS(app)
 
-# Definimos la zona horaria oficial de Córdoba, Argentina
-cordoba_tz = pytz.timezone('America/Argentina/Cordoba')
+# Definimos la zona horaria de Argentina (UTC-3) de forma nativa
+arg_tz = timezone(timedelta(hours=-3))
 
 @app.route('/')
 def home():
-    return "🤖 ¡El bot meteorológico para Córdoba Capital y Gran Córdoba está online y sincronizado en hora local!"
+    return "🤖 ¡El bot meteorológico para Córdoba Capital y Gran Córdoba está online y sincronizado!"
 
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
-    # Obtenemos la hora actual ajustada estrictamente a Córdoba
-    now = datetime.now(cordoba_tz)
+    # Obtenemos la hora actual ajustada a Argentina sin requerir pytz
+    now = datetime.now(arg_tz)
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
     current_hour_str = now.strftime("%H:%M")
     

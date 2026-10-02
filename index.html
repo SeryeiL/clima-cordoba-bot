@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -10,50 +10,10 @@
         header { text-align: center; margin-bottom: 20px; }
         h1 { color: #38bdf8; font-size: 1.5rem; margin-bottom: 5px; }
         .card { background-color: #1e293b; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; background: #16a34a; color: white; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; background: #0284c7; color: white; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
         .metric { background: #0f172a; padding: 10px; border-radius: 8px; font-size: 0.9rem; }
         .metric span { display: block; color: #94a3b8; font-size: 0.75rem; }
-        
-        /* Alerta Roja de Granizo Confirmado */
-        .hail-alert-banner { display: none; background: linear-gradient(135deg, #ef4444, #b91c1c); color: white; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center; font-weight: bold; animation: pulse-alert 2s infinite; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5); }
-        @keyframes pulse-alert { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
-
-        /* Contenedor de Imagen Satelital / Radar */
-        .sat-container { position: relative; width: 100%; height: 260px; border-radius: 8px; overflow: hidden; background: #0b0f19; border: 1px solid #334155; }
-        .sat-container iframe { width: 100% !important; height: 100% !important; border: none; }
-
-        /* Seguimiento Visual de la Tormenta */
-        .tracking-box { background: #0b0f19; border: 1px solid #334155; border-radius: 8px; padding: 14px; margin-bottom: 15px; }
-        .tracking-header { font-size: 0.85rem; color: #38bdf8; font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between; }
-        
-        .timeline { display: flex; justify-content: space-between; position: relative; margin: 20px 10px 10px 10px; }
-        .timeline::before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 3px; background: #334155; transform: translateY(-50%); z-index: 1; }
-        .timeline-step { position: relative; z-index: 2; text-align: center; }
-        .timeline-dot { width: 16px; height: 16px; background: #334155; border-radius: 50%; margin: 0 auto; border: 2px solid #0b0f19; transition: all 0.3s; }
-        .timeline-step.completed .timeline-dot { background: #38bdf8; box-shadow: 0 0 8px #38bdf8; }
-        .timeline-step.active .timeline-dot { background: #10b981; box-shadow: 0 0 12px #10b981; transform: scale(1.3); }
-        .timeline-label { font-size: 0.7rem; color: #94a3b8; margin-top: 6px; max-width: 90px; }
-        .timeline-step.active .timeline-label { color: #f8fafc; font-weight: bold; }
-
-        /* Estilo cascada de tuits y gráficos multimedia */
-        .tweet-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
-        .tweet-time { font-size: 0.75rem; color: #94a3b8; }
-        .tweet-text { font-size: 0.9rem; margin: 6px 0; }
-        
-        /* Contenedor visual optimizado para gráficos e imágenes de tuits */
-        .tweet-media { margin-top: 10px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #000; max-height: 280px; }
-        .tweet-media img { width: 100%; height: auto; display: block; object-fit: cover; max-height: 280px; }
-        
-        .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 10px; border-top: 1px solid #1e293b; padding-top: 6px; cursor: pointer; transition: color 0.2s; display: flex; justify-content: space-between; align-items: center; }
-        .tweet-interaction:hover { color: #7dd3fc; }
-        
-        .replies-box { display: none; margin-top: 10px; background: #131c31; border-radius: 6px; padding: 8px; border: 1px dashed #334155; }
-        .reply-item { font-size: 0.8rem; margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 4px; }
-        .reply-item:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-        .reply-user { color: #38bdf8; font-weight: bold; }
-        
-        .notif-btn { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -61,53 +21,30 @@
         <header>
             <h1>Clima Córdoba Pro</h1>
             <p>Gran Córdoba & Capital</p>
-            <span id="status-badge" class="badge">Sincronizado en Vivo</span><br>
-            <button class="notif-btn" onclick="requestNotificationPermission()">🔔 Activar Alertas Push</button>
+            <span id="status-badge" class="badge">Conectando...</span>
         </header>
 
-        <!-- Banner de Alerta Roja -->
-        <div id="hailAlertBanner" class="hail-alert-banner">
-            ⚠️ ¡GRANIZO CONFIRMADO EN TRAYECTORIA A CÓRDOBA CAPITAL! ⚠️<br>
-            <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Reportes de usuarios y radar indican caída inminente. Resguarde vehículos.</span>
-        </div>
-
-        <!-- Imagen Satelital / Radar en Vivo -->
         <div class="card">
-            <h3>Imagen Satelital & Radar (Córdoba)</h3>
-            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Seguimiento en tiempo real de nubosidad y precipitaciones.</p>
-            <div class="sat-container">
-                <iframe src="https://embed.windy.com/embed2.html?lat=-31.413&lon=-64.181&zoom=8&level=surface&overlay=wind&menu=&message=&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=default&metricTemp=default&radarRange=-1"></iframe>
-            </div>
-        </div>
-
-        <!-- Seguimiento y Proyección de Tormenta -->
-        <div class="card">
-            <h3>Seguimiento de Tormenta en Vivo</h3>
-            <div class="tracking-box">
-                <div class="tracking-header">
-                    <span id="currentLocText">📍 Estado: Normal</span>
-                    <span id="liveStatusBadge" style="color: #10b981;">Estable</span>
-                </div>
-                <div class="timeline" id="timelineContainer"></div>
-            </div>
+            <h3>Trayectoria de Tormenta</h3>
+            <p id="storm-status">Monitoreando celdas...</p>
             <div class="grid">
-                <div class="metric"><span>ESTADO CAPITAL</span><strong id="eta" style="color: #10b981; font-size: 1rem;">Estable</strong></div>
-                <div class="metric"><span>GRANIZO</span><strong id="hail">Nulo</strong></div>
+                <div class="metric"><span>ORIGEN</span><strong id="orig">--</strong></div>
+                <div class="metric"><span>DESTINO</span><strong id="dest">--</strong></div>
+                <div class="metric"><span>LLEGADA (ETA)</span><strong id="eta">--</strong></div>
+                <div class="metric"><span>GRANIZO</span><strong id="hail">--</strong></div>
                 <div class="metric"><span>VIENTO MÁX</span><strong id="wind">--</strong></div>
                 <div class="metric"><span>ACUMULADA</span><strong id="rain">--</strong></div>
             </div>
         </div>
 
-        <!-- Alertas SMN -->
         <div class="card">
             <h3>Alertas Oficiales SMN</h3>
             <div id="smn-alerts">Cargando alertas...</div>
         </div>
 
-        <!-- Cascada de Tuits con Gráficos y Multimedia -->
         <div class="card">
-            <h3>Reportes & Gráficos @dimarcorafael</h3>
-            <div id="dimarco-feed">Cargando cascada de tuits...</div>
+            <h3>Reportes @dimarcorafael</h3>
+            <div id="dimarco-feed">Cargando reportes en vivo...</div>
         </div>
 
         <p style="text-align: center; font-size: 0.8rem; color: #64748b;" id="last-sync">Última sincronización: --</p>
@@ -116,112 +53,39 @@
     <script>
         const API_URL = "https://clima-cordoba-bot.onrender.com/api/live-weather";
 
-        function requestNotificationPermission() {
-            if ("Notification" in window) {
-                Notification.requestPermission().then(permission => {
-                    if (permission === "granted") {
-                        alert("¡Alertas push activadas correctamente para tu celular!");
-                    } else {
-                        alert("Permiso de notificaciones denegado.");
-                    }
-                });
-            } else {
-                alert("Tu navegador no soporta notificaciones push.");
-            }
-        }
-
         async function fetchWeatherData() {
             try {
                 let res = await fetch(API_URL);
                 let data = await res.json();
                 
-                let t = data.storm_tracking;
-                document.getElementById('currentLocText').innerText = "📍 Estado: " + t.current_location;
-                document.getElementById('eta').innerText = t.eta_display;
+                document.getElementById('status-badge').innerText = "Conectado en Vivo";
+                document.getElementById('status-badge').style.background = "#16a34a";
+                
+                let t = data.storm_trajectory;
+                document.getElementById('storm-status').innerText = t.status;
+                document.getElementById('orig').innerText = t.origin;
+                document.getElementById('dest').innerText = t.destination;
+                document.getElementById('eta').innerText = t.eta_minutes;
                 document.getElementById('hail').innerText = t.hail_probability;
                 document.getElementById('wind').innerText = t.wind_speed;
                 document.getElementById('rain').innerText = t.accumulated_rain;
 
-                let timelineHtml = "";
-                if (t.trajectory_path) {
-                    t.trajectory_path.forEach((stepName, idx) => {
-                        let stepClass = "";
-                        if (idx < t.current_step_index) stepClass = "completed";
-                        else if (idx === t.current_step_index) stepClass = "active";
-                        
-                        timelineHtml += `
-                            <div class="timeline-step ${stepClass}">
-                                <div class="timeline-dot"></div>
-                                <div class="timeline-label">${stepName}</div>
-                            </div>`;
-                    });
-                }
-                document.getElementById('timelineContainer').innerHTML = timelineHtml;
-
-                let banner = document.getElementById('hailAlertBanner');
-                if (t.hail_confirmed === true) {
-                    banner.style.display = "block";
-                    document.getElementById('hail').style.color = "#ef4444";
-                } else {
-                    banner.style.display = "none";
-                    document.getElementById('hail').style.color = "#38bdf8";
-                }
-
                 let smnHtml = "";
                 data.alerts.forEach(a => {
-                    smnHtml += `<div style="margin-bottom: 10px; border-bottom: 1px solid #334155; padding-bottom: 8px;"><strong>${a.title}</strong><br><small style="color: #cbd5e1;">${a.description}</small></div>`;
+                    smnHtml += `<p><strong>${a.title}</strong><br><small>${a.description}</small></p>`;
                 });
-                document.getElementById('smn-alerts').innerHTML = smnHtml;
+                document.getElementById('smn-alerts').innerText = smnHtml; // Usar text/html seguro
 
                 let dimarcoHtml = "";
-                if (data.dimarco_tweets && data.dimarco_tweets.length > 0) {
-                    data.dimarco_tweets.forEach(tw => {
-                        // Renderizado seguro del contenedor de gráficos/imágenes
-                        let mediaHtml = "";
-                        if (tw.media_image) {
-                            mediaHtml = `<div class="tweet-media"><img src="${tw.media_image}" alt="Gráfico o radar oficial"></div>`;
-                        }
-
-                        let repliesHtml = "";
-                        if (tw.user_replies && tw.user_replies.length > 0) {
-                            tw.user_replies.forEach(r => {
-                                repliesHtml += `<div class="reply-item"><span class="reply-user">${r.user}:</span> ${r.text}</div>`;
-                            });
-                        }
-
-                        dimarcoHtml += `
-                            <div class="tweet-card">
-                                <div class="tweet-time">${tw.time} - <strong>${tw.author}</strong></div>
-                                <div class="tweet-text">${tw.text}</div>
-                                ${mediaHtml}
-                                <div class="tweet-interaction" onclick="toggleReplies(${tw.id})">
-                                    <span>💬 ${tw.interaction_summary}</span>
-                                    <span style="font-size: 0.7rem; color: #38bdf8;">▼ Ver respuestas</span>
-                                </div>
-                                <div id="replies-${tw.id}" class="replies-box">
-                                    <p style="margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; font-weight: bold;">Reportes y respuestas de seguidores:</p>
-                                    ${repliesHtml}
-                                </div>
-                            </div>`;
-                    });
-                } else {
-                    dimarcoHtml = "<p>No hay reportes recientes.</p>";
-                }
+                data.dimarco_tweets.forEach(tw => {
+                    dimarcoHtml += `<p style="border-left: 3px solid #38bdf8; padding-left: 8px; margin-bottom: 10px;"><small>${tw.time}</small><br>${tw.text}</p>`;
+                });
                 document.getElementById('dimarco-feed').innerHTML = dimarcoHtml;
 
                 document.getElementById('last-sync').innerText = "Última sincronización: " + data.last_update;
             } catch (e) {
-                document.getElementById('status-badge').innerText = "Error de conexión";
+                document.getElementById('status-badge').innerText = "Reintentando conexión...";
                 document.getElementById('status-badge').style.background = "#dc2626";
-            }
-        }
-
-        function toggleReplies(id) {
-            let box = document.getElementById('replies-' + id);
-            if (box.style.display === 'block') {
-                box.style.display = 'none';
-            } else {
-                box.style.display = 'block';
             }
         }
 

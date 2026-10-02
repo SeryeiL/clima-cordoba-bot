@@ -36,10 +36,13 @@
         .timeline-label { font-size: 0.7rem; color: #94a3b8; margin-top: 6px; max-width: 90px; }
         .timeline-step.active .timeline-label { color: #f8fafc; font-weight: bold; }
 
-        /* Estilo cascada de tuits */
+        /* Estilo cascada de tuits y archivos multimedia */
         .tweet-card { background: #0f172a; border-left: 4px solid #38bdf8; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
         .tweet-time { font-size: 0.75rem; color: #94a3b8; }
         .tweet-text { font-size: 0.9rem; margin: 6px 0; }
+        .tweet-media { margin-top: 8px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; max-height: 250px; background: #000; }
+        .tweet-media img { width: 100%; height: auto; display: block; object-fit: cover; }
+        
         .tweet-interaction { font-size: 0.75rem; color: #38bdf8; margin-top: 8px; border-top: 1px solid #1e293b; padding-top: 6px; cursor: pointer; transition: color 0.2s; display: flex; justify-content: space-between; align-items: center; }
         .tweet-interaction:hover { color: #7dd3fc; }
         
@@ -60,7 +63,7 @@
             <button class="notif-btn" onclick="requestNotificationPermission()">🔔 Activar Alertas Push</button>
         </header>
 
-        <!-- Banner de Alerta Roja (Solo visible si hay granizo confirmado) -->
+        <!-- Banner de Alerta Roja -->
         <div id="hailAlertBanner" class="hail-alert-banner">
             ⚠️ ¡GRANIZO CONFIRMADO EN TRAYECTORIA A CÓRDOBA CAPITAL! ⚠️<br>
             <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Reportes de usuarios y radar indican caída inminente. Resguarde vehículos.</span>
@@ -80,7 +83,7 @@
             <h3>Seguimiento de Tormenta en Vivo</h3>
             <div class="tracking-box">
                 <div class="tracking-header">
-                    <span id="currentLocText">📍 Ubicación: Normal</span>
+                    <span id="currentLocText">📍 Estado: Normal</span>
                     <span id="liveStatusBadge" style="color: #10b981;">Estable</span>
                 </div>
                 <div class="timeline" id="timelineContainer"></div>
@@ -99,9 +102,9 @@
             <div id="smn-alerts">Cargando alertas...</div>
         </div>
 
-        <!-- Tuits en Cascada con Interacciones Desplegables -->
+        <!-- Tuits en Cascada con Multimedia e Interacciones -->
         <div class="card">
-            <h3>Reportes & Interacciones @dimarcorafael</h3>
+            <h3>Reportes & Multimedia @dimarcorafael</h3>
             <div id="dimarco-feed">Cargando cascada de tuits...</div>
         </div>
 
@@ -171,6 +174,11 @@
                 let dimarcoHtml = "";
                 if (data.dimarco_tweets && data.dimarco_tweets.length > 0) {
                     data.dimarco_tweets.forEach(tw => {
+                        let mediaHtml = "";
+                        if (tw.media_image) {
+                            mediaHtml = `<div class="tweet-media"><img src="${tw.media_image}" alt="Gráfico o radar meteorológico"></div>`;
+                        }
+
                         let repliesHtml = "";
                         if (tw.user_replies && tw.user_replies.length > 0) {
                             tw.user_replies.forEach(r => {
@@ -182,6 +190,7 @@
                             <div class="tweet-card">
                                 <div class="tweet-time">${tw.time} - <strong>${tw.author}</strong></div>
                                 <div class="tweet-text">${tw.text}</div>
+                                ${mediaHtml}
                                 <div class="tweet-interaction" onclick="toggleReplies(${tw.id})">
                                     <span>💬 ${tw.interaction_summary}</span>
                                     <span style="font-size: 0.7rem; color: #38bdf8;">▼ Ver respuestas</span>

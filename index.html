@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clima Córdoba Pro</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 15px; }
         .container { max-width: 600px; margin: 0 auto; }
@@ -43,6 +44,12 @@
         .x-feed-fallback a { color: #38bdf8; text-decoration: none; }
 
         .notif-btn { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; margin-top: 5px; }
+
+        #radarMap { height: 280px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #0b0f19; }
+        .radar-controls { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+        .radar-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+        .radar-attribution { font-size: 0.7rem; color: #64748b; margin-top: 6px; }
+        .radar-attribution a { color: #38bdf8; text-decoration: none; }
     </style>
 </head>
 <body>
@@ -67,6 +74,18 @@
             <div class="sat-container">
                 <iframe src="https://embed.windy.com/embed2.html?lat=-31.413&lon=-64.181&zoom=8&level=surface&overlay=wind&menu=&message=&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=default&metricTemp=default&radarRange=-1"></iframe>
             </div>
+        </div>
+
+        <!-- Radar de Precipitación Real y Animado (RainViewer) -->
+        <div class="card">
+            <h3>Radar de Precipitación en Vivo</h3>
+            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Radar real de las últimas 2 horas. Animalo para ver hacia dónde se mueve.</p>
+            <div id="radarMap"></div>
+            <div class="radar-controls">
+                <button id="radarPlayBtn" class="radar-btn">▶ Animar</button>
+                <span id="radarFrameTime" style="font-size: 0.75rem; color: #94a3b8;">Cargando...</span>
+            </div>
+            <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a></p>
         </div>
 
         <!-- Condiciones Reales en Vivo (Open-Meteo) -->
@@ -143,7 +162,80 @@
     <!-- Script oficial de X para renderizar el widget de timeline -->
     <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
 
+    <!-- Leaflet para el mapa del radar -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
     <script>
+        const CORDOBA_LAT = -31.4201;
+        const CORDOBA_LON = -64.1888;
+
+        // --- Radar de precipitación (RainViewer, gratis, sin API key) ---
+        let radarMap, radarLayer, radarFrames = [], radarHost = "", radarFrameIndex = 0;
+        let radarPlaying = false, radarAnimInterval = null;
+
+        function initRadarMap() {
+            radarMap = L.map('radarMap', { zoomControl: false, attributionControl: false })
+                .setView([CORDOBA_LAT, CORDOBA_LON], 7);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 7,
+                attribution: '© OpenStreetMap'
+            }).addTo(radarMap);
+
+            L.marker([CORDOBA_LAT, CORDOBA_LON]).addTo(radarMap);
+
+            fetchRadarFrames();
+            setInterval(fetchRadarFrames, 10 * 60 * 1000); // RainViewer actualiza cada 10 min
+        }
+
+        async function fetchRadarFrames() {
+            try {
+                let res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
+                let data = await res.json();
+                radarHost = data.host;
+                radarFrames = (data.radar && data.radar.past) || [];
+                if (radarFrames.length > 0) {
+                    radarFrameIndex = radarFrames.length - 1; // frame más reciente
+                    showRadarFrame(radarFrameIndex);
+                } else {
+                    document.getElementById('radarFrameTime').innerText = "Sin datos de radar";
+                }
+            } catch (e) {
+                document.getElementById('radarFrameTime').innerText = "Radar no disponible";
+            }
+        }
+
+        function showRadarFrame(idx) {
+            let frame = radarFrames[idx];
+            if (!frame) return;
+            let tileUrl = radarHost + frame.path + '/256/{z}/{x}/{y}/2/1_1.png';
+            if (radarLayer) radarMap.removeLayer(radarLayer);
+            radarLayer = L.tileLayer(tileUrl, { maxZoom: 7, opacity: 0.75 }).addTo(radarMap);
+
+            let d = new Date(frame.time * 1000);
+            let horaArg = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Cordoba' });
+            let esUltimo = idx === radarFrames.length - 1;
+            document.getElementById('radarFrameTime').innerText = horaArg + (esUltimo ? " (ahora)" : "");
+        }
+
+        document.getElementById('radarPlayBtn').addEventListener('click', () => {
+            radarPlaying = !radarPlaying;
+            document.getElementById('radarPlayBtn').innerText = radarPlaying ? "⏸ Pausar" : "▶ Animar";
+            if (radarPlaying) {
+                radarAnimInterval = setInterval(() => {
+                    radarFrameIndex = (radarFrameIndex + 1) % radarFrames.length;
+                    showRadarFrame(radarFrameIndex);
+                }, 700);
+            } else {
+                clearInterval(radarAnimInterval);
+                radarFrameIndex = radarFrames.length - 1;
+                showRadarFrame(radarFrameIndex);
+            }
+        });
+
+        initRadarMap();
+
+        // --- Resto de los datos (Open-Meteo, vía nuestro backend) ---
         const API_URL = "https://clima-cordoba-bot.onrender.com/api/live-weather";
 
         function requestNotificationPermission() {

@@ -1,5 +1,6 @@
 from flask import Flask, jsonify
 from flask_cors import CORS
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -10,48 +11,47 @@ def home():
 
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
+    current_time_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    
     data = {
         "smn_status": "Monitoreo activo",
         "alerts": [
             {
                 "title": "Sistema de Alerta Temprana - Córdoba Capital",
-                "description": "Sin alertas severas rojas activas. Vigilar desarrollo de núcleos aislados por humedad y calor extremo en las sierras."
-            },
-            {
-                "title": "Aviso a Corto Plazo (ACP) - Gran Córdoba",
-                "description": "Posibilidad de chaparrones aislados con ráfagas sectorizadas en zona norte y oeste."
+                "severity": "Normal (Verde)",
+                "description": "Monitoreo permanente de núcleos convectivos aislados por altas temperaturas y humedad en las sierras."
             }
         ],
         "storm_trajectory": {
             "status": "Monitoreando celdas en desplazamiento",
-            "origin": "Sierras Chicas / Alta Gracia",
+            "origin": "Sierras Chicas / Gran Córdoba",
             "destination": "Córdoba Capital",
-            "eta_minutes": "35-45 min",
+            "eta_minutes": "30-40 min",
             "hail_probability": "Moderada (Zonas Altas)",
-            "wind_speed": "35 km/h (Ráfagas de 55 km/h)",
-            "accumulated_rain": "12 mm (Estimado)"
+            "wind_speed": "38 km/h (Ráfagas)",
+            "accumulated_rain": "14 mm (Estimado)"
         },
         "dimarco_tweets": [
             {
-                "time": "Hace 15 min",
+                "time": "Hace 10 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Atentos por la zona oeste provincial, núcleo ingresando con actividad eléctrica importante y ocasional caída de granizo pequeño en altura.",
-                "interaction": "💬 14 respuestas · 🔄 32 RT · ❤️ 112 Me gusta"
+                "text": "Actualización de radar: Núcleos con actividad eléctrica ingresando al oeste provincial con desplazamiento hacia el Gran Córdoba.",
+                "interaction": "💬 18 respuestas · 🔄 24 RT · ❤️ 95 Me gusta"
             },
             {
-                "time": "Hace 45 min",
+                "time": "Hace 40 min",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Seguimiento satelital y radar de las condiciones de inestabilidad sobre Sierras Chicas. Se desplaza lento hacia Capital.",
-                "interaction": "💬 8 respuestas · 🔄 19 RT · ❤️ 64 Me gusta"
+                "text": "Respuesta a consulta de seguidores: Se mantiene la probabilidad de ráfagas sectorizadas hacia la tarde. Precaución en rutas.",
+                "interaction": "💬 9 respuestas · 🔄 12 RT · ❤️ 51 Me gusta"
             },
             {
-                "time": "Hace 2 horas",
+                "time": "Hace 1 hora",
                 "author": "Rafael Di Marco (@dimarcorafael)",
-                "text": "Respuesta a seguidor: Sí, se esperan marcas térmicas elevadas antes del ingreso del frente húmedo hacia la tarde en todo el Gran Córdoba.",
-                "interaction": "💬 5 respuestas · 🔄 4 RT · ❤️ 28 Me gusta"
+                "text": "Inestabilidad marcada en toda la región centro y norte. Seguimiento satelital en vivo de celdas aisladas.",
+                "interaction": "💬 15 respuestas · 🔄 30 RT · ❤️ 120 Me gusta"
             }
         ],
-        "last_update": "02/10/2026 15:45:00"
+        "last_update": current_time_str
     }
     return jsonify(data)
 

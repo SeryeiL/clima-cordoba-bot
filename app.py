@@ -210,9 +210,13 @@ def _descargar_tile(url):
 
 
 def _descargar_frame_compuesto(host, frame_path, xtile_base, ytile_base):
-    """Baja la grilla de 3x3 tiles de un frame y las pega en una sola imagen."""
+    """Baja la grilla de 3x3 tiles de un frame y las pega en una sola imagen.
+    Devuelve (imagen_compuesta, tiles_descargados_ok) para poder diagnosticar
+    si un resultado vacío es por falta de lluvia o porque las descargas
+    están fallando."""
     composite = Image.new("RGBA", (TILE_SIZE * 3, TILE_SIZE * 3), (0, 0, 0, 0))
     tareas = {}
+    tiles_ok = 0
     with ThreadPoolExecutor(max_workers=9) as pool:
         for dy in range(3):
             for dx in range(3):
@@ -225,9 +229,10 @@ def _descargar_frame_compuesto(host, frame_path, xtile_base, ytile_base):
             try:
                 tile_img = future.result()
                 composite.paste(tile_img, (dx * TILE_SIZE, dy * TILE_SIZE))
+                tiles_ok += 1
             except Exception:
                 pass  # si falta un tile, seguimos con lo que tengamos
-    return composite
+    return composite, tiles_ok
 
 
 def _centroide_precipitacion(img):
@@ -264,9 +269,15 @@ def analizar_trayectoria_tormenta():
         xt0, yt0 = _deg2tile(LAT, LON, RADAR_ZOOM)
         xtile_base, ytile_base = xt0 - 1, yt0 - 1  # esquina de la grilla 3x3
 
+        # Diagnóstico: para poder distinguir "no está lloviendo" de "algo se
+        # rompió" cuando no se puede calcular trayectoria.
+        tiles_ok_total = 0
+        tiles_esperados_total = len(frames_a_usar) * 9
+
         puntos = []
         for f in frames_a_usar:
-            composite = _descargar_frame_compuesto(host, f["path"], xtile_base, ytile_base)
+            composite, tiles_ok = _descargar_frame_compuesto(host, f["path"], xtile_base, ytile_base)
+            tiles_ok_total += tiles_ok
             centroide = _centroide_precipitacion(composite)
             if centroide is None:
                 continue
@@ -274,10 +285,25 @@ def analizar_trayectoria_tormenta():
             lat, lon = _tile_pixel_to_latlon(xtile_base, ytile_base, RADAR_ZOOM, px, py)
             puntos.append({"time": f["time"], "lat": lat, "lon": lon, "peso": peso})
 
+        diagnostico = {
+            "frames_en_indice_rainviewer": len(frames),
+            "frames_evaluados": len(frames_a_usar),
+            "frames_con_senal_de_lluvia": len(puntos),
+            "tiles_descargados_ok": f"{tiles_ok_total}/{tiles_esperados_total}",
+        }
+
         if len(puntos) < 2:
+            if tiles_ok_total == 0:
+                motivo = "No se pudo descargar ningún tile del radar (posible problema de red o de la URL del host de RainViewer, no falta de lluvia)."
+            elif tiles_ok_total < tiles_esperados_total:
+                motivo = "Se descargaron algunos tiles pero no todos; puede haber afectado la detección. Puede ser un problema transitorio de red."
+            else:
+                motivo = "Las descargas funcionaron bien (todos los tiles OK); simplemente no hay precipitación detectable en el radar en esta zona ahora mismo."
             return {
                 "ok": False,
                 "error": "No se detectó suficiente precipitación en el radar en la zona para calcular trayectoria.",
+                "motivo_probable": motivo,
+                "diagnostico": diagnostico,
             }
 
         primero, ultimo = puntos[0], puntos[-1]
@@ -305,6 +331,7 @@ def analizar_trayectoria_tormenta():
             "eta": eta,
             "frames_usados": len(puntos),
             "metodo": "Centroide ponderado de reflectividad en radar RainViewer, comparado entre frames (nowcasting lineal). Estimación propia, no oficial.",
+            "diagnostico": diagnostico,
         }
     except Exception as e:
         return {"ok": False, "error": f"No se pudo calcular la trayectoria: {str(e)}"}

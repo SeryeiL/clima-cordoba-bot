@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import math
+import time
 import requests
 from PIL import Image
 
@@ -15,6 +16,17 @@ arg_tz = timezone(timedelta(hours=-3))
 # Coordenadas de Córdoba Capital
 LAT = -31.4201
 LON = -64.1888
+
+# ============================================================
+# CACHÉ simple en memoria (evita golpear Open-Meteo/RainViewer en cada
+# pedido; además de más rápido, esto es lo que evita pegarle al límite de
+# rate-limit gratuito de Open-Meteo cuando hay varios clientes pidiendo
+# a la vez o se recarga la página seguido).
+# ============================================================
+_weather_cache = {"data": None, "ts": 0}
+_trajectory_cache = {"data": None, "ts": 0}
+CACHE_TTL_WEATHER = 180      # 3 min
+CACHE_TTL_TRAJECTORY = 300   # 5 min (coincide con el refresco del frontend)
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -300,7 +312,14 @@ def analizar_trayectoria_tormenta():
 
 @app.route('/api/storm-trajectory', methods=['GET'])
 def storm_trajectory():
-    return jsonify(analizar_trayectoria_tormenta())
+    now = time.time()
+    if _trajectory_cache["data"] is not None and (now - _trajectory_cache["ts"]) < CACHE_TTL_TRAJECTORY:
+        return jsonify(_trajectory_cache["data"])
+
+    resultado = analizar_trayectoria_tormenta()
+    _trajectory_cache["data"] = resultado
+    _trajectory_cache["ts"] = now
+    return jsonify(resultado)
 
 
 @app.route('/')
@@ -310,6 +329,10 @@ def home():
 
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
+    now_ts = time.time()
+    if _weather_cache["data"] is not None and (now_ts - _weather_cache["ts"]) < CACHE_TTL_WEATHER:
+        return jsonify(_weather_cache["data"])
+
     now = datetime.now(arg_tz)
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
 
@@ -389,7 +412,14 @@ def live_weather():
             "last_update": current_time_str,
         }
 
+    # Guardamos en caché tanto éxito como error: si Open-Meteo nos está
+    # limitando (429), cachear el error también evita que sigamos
+    # insistiendo y empeorando el problema.
+    _weather_cache["data"] = data
+    _weather_cache["ts"] = now_ts
+
     return jsonify(data)
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)

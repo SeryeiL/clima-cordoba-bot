@@ -88,6 +88,16 @@
             <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a></p>
         </div>
 
+        <!-- Trayectoria y ETA estimadas (cálculo propio sobre el radar) -->
+        <div class="card">
+            <h3>Trayectoria Estimada</h3>
+            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
+                Calculado comparando el radar de los últimos 40 min. Es una <strong>estimación</strong> (nowcasting lineal),
+                se degrada más allá de ~60 min. No es un dato oficial.
+            </p>
+            <div id="trajectory-content">Calculando trayectoria...</div>
+        </div>
+
         <!-- Condiciones Reales en Vivo (Open-Meteo) -->
         <div class="card">
             <h3>Condiciones en Vivo — Córdoba Capital</h3>
@@ -237,6 +247,43 @@
 
         // --- Resto de los datos (Open-Meteo, vía nuestro backend) ---
         const API_URL = "https://clima-cordoba-bot.onrender.com/api/live-weather";
+        const TRAJECTORY_API_URL = "https://clima-cordoba-bot.onrender.com/api/storm-trajectory";
+
+        async function fetchTrajectory() {
+            let box = document.getElementById('trajectory-content');
+            try {
+                let res = await fetch(TRAJECTORY_API_URL);
+                let t = await res.json();
+
+                if (t.ok === false) {
+                    box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}</p>`;
+                    return;
+                }
+
+                let etaHtml = "";
+                if (t.eta && t.eta.eta_minutos !== null && t.eta.eta_minutos !== undefined) {
+                    etaHtml = `<strong style="color:#38bdf8; font-size:1.1rem;">~${t.eta.eta_minutos} min</strong>`;
+                } else {
+                    etaHtml = `<span style="color:#94a3b8; font-size:0.85rem;">${(t.eta && t.eta.nota) || "No calculable ahora"}</span>`;
+                }
+
+                box.innerHTML = `
+                    <div class="grid">
+                        <div class="metric"><span>ZONA ACTUAL APROX.</span><strong>${t.zona_actual_aproximada}</strong></div>
+                        <div class="metric"><span>RUMBO</span><strong>${t.rumbo_compass} (${t.rumbo_grados}°)</strong></div>
+                        <div class="metric"><span>VELOCIDAD</span><strong>${t.velocidad_estim_kmh} km/h</strong></div>
+                        <div class="metric"><span>DIST. A CAPITAL</span><strong>${t.distancia_a_capital_km} km</strong></div>
+                    </div>
+                    <div style="margin-top:10px; text-align:center;">
+                        <span style="font-size:0.75rem; color:#94a3b8;">ETA estimado a Capital: </span>${etaHtml}
+                    </div>`;
+            } catch (e) {
+                box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">No se pudo conectar para calcular la trayectoria.</p>`;
+            }
+        }
+
+        fetchTrajectory();
+        setInterval(fetchTrajectory, 5 * 60 * 1000); // cada 5 min, el radar solo cambia cada 10
 
         function requestNotificationPermission() {
             if ("Notification" in window) {
@@ -328,10 +375,6 @@
         }
 
         setInterval(fetchWeatherData, 60000);
-        fetchWeatherData();
-    </script>
-</body>
-</html>
         fetchWeatherData();
     </script>
 </body>

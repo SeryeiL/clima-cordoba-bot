@@ -312,6 +312,18 @@
                     return;
                 }
 
+                // Si el último pedido a Open-Meteo falló, el backend nos manda el
+                // último dato real que sí tuvo, marcado como "stale" (viejo).
+                // Mostramos un aviso en vez de fingir que es en vivo.
+                let badgeEl = document.getElementById('status-badge');
+                if (data.stale === true) {
+                    badgeEl.innerText = `Datos de hace ${data.stale_minutes} min (no se pudo actualizar)`;
+                    badgeEl.style.background = "#b45309";
+                } else {
+                    badgeEl.innerText = "Sincronizado en Vivo";
+                    badgeEl.style.background = "#16a34a";
+                }
+
                 let c = data.current_conditions;
                 document.getElementById('currentLocText').innerText = "📍 Condición: " + c.condition_text;
                 document.getElementById('temp').innerText = c.temperature_c + "°C";

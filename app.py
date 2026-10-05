@@ -23,10 +23,13 @@ LON = -64.1888
 # rate-limit gratuito de Open-Meteo cuando hay varios clientes pidiendo
 # a la vez o se recarga la página seguido).
 # ============================================================
-_weather_cache = {"data": None, "ts": 0}
+_weather_cache = {"data": None, "ts": 0, "ok": None}
+_weather_last_good = {"data": None, "ts": 0}  # último pronóstico que SÍ funcionó
 _trajectory_cache = {"data": None, "ts": 0}
-CACHE_TTL_WEATHER = 180      # 3 min
-CACHE_TTL_TRAJECTORY = 300   # 5 min (coincide con el refresco del frontend)
+CACHE_TTL_WEATHER_OK = 180     # 3 min: si el último pedido salió bien, no reconsultamos antes de esto
+CACHE_TTL_WEATHER_ERROR = 20   # 20 s: si falló (ej. 429), reintentamos pronto en vez de quedarnos
+                               # pegados al error por 3 min enteros
+CACHE_TTL_TRAJECTORY = 300    # 5 min (coincide con el refresco del frontend)
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -354,19 +357,32 @@ def home():
     return "🤖 Bot meteorológico Córdoba - API activa."
 
 
+def _fetch_open_meteo_con_reintento():
+    """Un pedido a Open-Meteo, con un reintento corto si falla (sobre todo
+    pensado para un 429 pasajero por compartir IP de salida en Render)."""
+    try:
+        resp = requests.get(OPEN_METEO_URL, timeout=8)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception:
+        time.sleep(1.5)
+        resp = requests.get(OPEN_METEO_URL, timeout=8)
+        resp.raise_for_status()
+        return resp.json()
+
+
 @app.route('/api/live-weather', methods=['GET'])
 def live_weather():
     now_ts = time.time()
-    if _weather_cache["data"] is not None and (now_ts - _weather_cache["ts"]) < CACHE_TTL_WEATHER:
+    cache_ttl = CACHE_TTL_WEATHER_OK if _weather_cache.get("ok") else CACHE_TTL_WEATHER_ERROR
+    if _weather_cache["data"] is not None and (now_ts - _weather_cache["ts"]) < cache_ttl:
         return jsonify(_weather_cache["data"])
 
     now = datetime.now(arg_tz)
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
 
     try:
-        resp = requests.get(OPEN_METEO_URL, timeout=8)
-        resp.raise_for_status()
-        meteo = resp.json()
+        meteo = _fetch_open_meteo_con_reintento()
 
         current = meteo["current"]
         code = current.get("weather_code", 0)
@@ -427,21 +443,36 @@ def live_weather():
             "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
             "last_update": current_time_str,
             "ok": True,
+            "stale": False,
         }
-    except Exception as e:
-        # Si Open-Meteo falla o no responde, avisamos explícitamente en vez de
-        # inventar datos para que la app "se vea bien".
-        data = {
-            "ok": False,
-            "error": "No se pudo obtener el pronóstico en este momento.",
-            "detail": str(e),
-            "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
-            "last_update": current_time_str,
-        }
+        # Éxito: lo guardamos como el último dato bueno, para poder usarlo
+        # si el próximo pedido falla (ej. 429 por IP compartida en Render).
+        _weather_last_good["data"] = data
+        _weather_last_good["ts"] = now_ts
+        _weather_cache["ok"] = True
 
-    # Guardamos en caché tanto éxito como error: si Open-Meteo nos está
-    # limitando (429), cachear el error también evita que sigamos
-    # insistiendo y empeorando el problema.
+    except Exception as e:
+        # Si Open-Meteo falla (ej. límite de la IP compartida de Render, no
+        # necesariamente nuestro propio tráfico), preferimos mostrar el
+        # último dato real que sí tuvimos, marcado como desactualizado, en
+        # vez de dejar la pantalla vacía. Solo si nunca tuvimos ningún dato
+        # bueno mostramos el error explícito.
+        if _weather_last_good["data"] is not None:
+            data = dict(_weather_last_good["data"])
+            edad_min = round((now_ts - _weather_last_good["ts"]) / 60, 1)
+            data["stale"] = True
+            data["stale_minutes"] = edad_min
+            data["stale_reason"] = "No se pudo actualizar ahora (probable límite temporal de la fuente de datos); mostrando el último dato real obtenido."
+        else:
+            data = {
+                "ok": False,
+                "error": "No se pudo obtener el pronóstico en este momento.",
+                "detail": str(e),
+                "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
+                "last_update": current_time_str,
+            }
+        _weather_cache["ok"] = False
+
     _weather_cache["data"] = data
     _weather_cache["ts"] = now_ts
 

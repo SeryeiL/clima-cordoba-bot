@@ -313,15 +313,25 @@
                 }
 
                 // Si el último pedido a Open-Meteo falló, el backend nos manda el
-                // último dato real que sí tuvo, marcado como "stale" (viejo).
-                // Mostramos un aviso en vez de fingir que es en vivo.
+                // último dato real que sí tuvo, marcado como "stale" (viejo), o
+                // bien un dato fresco de la fuente de respaldo (MET Norway),
+                // marcado como "degraded". Mostramos un aviso distinto para
+                // cada caso en vez de fingir que todo es igual de preciso.
                 let badgeEl = document.getElementById('status-badge');
                 if (data.stale === true) {
                     badgeEl.innerText = `Datos de hace ${data.stale_minutes} min (no se pudo actualizar)`;
                     badgeEl.style.background = "#b45309";
+                } else if (data.degraded === true) {
+                    badgeEl.innerText = "En vivo (fuente de respaldo)";
+                    badgeEl.style.background = "#0369a1";
                 } else {
                     badgeEl.innerText = "Sincronizado en Vivo";
                     badgeEl.style.background = "#16a34a";
+                }
+
+                let sourceNoteEl = document.getElementById('data-source-note');
+                if (sourceNoteEl) {
+                    sourceNoteEl.innerText = data.source || "Fuente: Open-Meteo (modelo meteorológico, dato real)";
                 }
 
                 let c = data.current_conditions;

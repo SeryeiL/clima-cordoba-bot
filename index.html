@@ -11,12 +11,22 @@
         header { text-align: center; margin-bottom: 20px; }
         h1 { color: #38bdf8; font-size: 1.5rem; margin-bottom: 5px; }
         .card { background-color: #1e293b; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; background: #16a34a; color: white; }
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; background: #475569; color: white; }
         .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
         .metric { background: #0f172a; padding: 10px; border-radius: 8px; font-size: 0.9rem; }
         .metric span { display: block; color: #94a3b8; font-size: 0.75rem; }
 
-        /* Alerta Roja de Granizo Confirmado */
+        /* Aviso de estado de los datos (servidor despertando / fuente de respaldo / datos viejos) */
+        .status-banner { display: none; border-radius: 10px; padding: 10px 12px; margin-bottom: 15px; font-size: 0.82rem; line-height: 1.35; border: 1px solid transparent; }
+        .status-banner strong { display: block; margin-bottom: 2px; }
+        .status-banner.waking { background: #1e293b; border-color: #475569; color: #cbd5e1; }
+        .status-banner.degraded { background: #0c2a43; border-color: #0369a1; color: #bae6fd; }
+        .status-banner.stale { background: #3a2308; border-color: #b45309; color: #fde68a; }
+        .status-banner.offline { background: #3b1111; border-color: #b91c1c; color: #fecaca; }
+
+        .chip { display: inline-block; font-size: 0.68rem; font-weight: bold; padding: 2px 8px; border-radius: 10px; background: #0369a1; color: #e0f2fe; vertical-align: middle; margin-left: 6px; }
+
+        /* Alerta de posible granizo según el modelo */
         .hail-alert-banner { display: none; background: linear-gradient(135deg, #ef4444, #b91c1c); color: white; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center; font-weight: bold; animation: pulse-alert 2s infinite; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5); }
         @keyframes pulse-alert { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
 
@@ -46,8 +56,11 @@
         .notif-btn { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; margin-top: 5px; }
 
         #radarMap { height: 280px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #0b0f19; }
-        .radar-controls { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+        .radar-controls { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 10px; }
         .radar-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
+        .radar-btn:disabled { opacity: 0.6; cursor: default; }
+        .radar-note { font-size: 0.78rem; color: #cbd5e1; margin: 8px 0 0 0; min-height: 1em; }
+        .radar-note.warn { color: #fcd34d; }
         .radar-attribution { font-size: 0.7rem; color: #64748b; margin-top: 6px; }
         .radar-attribution a { color: #38bdf8; text-decoration: none; }
     </style>
@@ -57,14 +70,17 @@
         <header>
             <h1>Clima Córdoba Pro</h1>
             <p>Gran Córdoba & Capital</p>
-            <span id="status-badge" class="badge">Sincronizado en Vivo</span><br>
+            <span id="status-badge" class="badge">Conectando…</span><br>
             <button class="notif-btn" onclick="requestNotificationPermission()">🔔 Activar Alertas Push</button>
         </header>
 
-        <!-- Banner de Alerta Roja -->
+        <!-- Aviso de estado de los datos -->
+        <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
+
+        <!-- Banner de posible granizo (según el modelo, no es una confirmación) -->
         <div id="hailAlertBanner" class="hail-alert-banner">
-            ⚠️ ¡GRANIZO CONFIRMADO EN TRAYECTORIA A CÓRDOBA CAPITAL! ⚠️<br>
-            <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Reportes de usuarios y radar indican caída inminente. Resguarde vehículos.</span>
+            ⚠️ <span id="hailAlertTitle">El modelo indica posible tormenta con granizo</span> ⚠️<br>
+            <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Es una estimación del modelo, no una confirmación. Mirá el radar y el parte oficial del SMN.</span>
         </div>
 
         <!-- Imagen Satelital / Radar en Vivo -->
@@ -79,13 +95,14 @@
         <!-- Radar de Precipitación Real y Animado (RainViewer) -->
         <div class="card">
             <h3>Radar de Precipitación en Vivo</h3>
-            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Radar real de las últimas 2 horas. Animalo para ver hacia dónde se mueve.</p>
+            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Radar real de la última hora. Animalo para ver hacia dónde se mueve.</p>
             <div id="radarMap"></div>
             <div class="radar-controls">
                 <button id="radarPlayBtn" class="radar-btn">▶ Animar</button>
-                <span id="radarFrameTime" style="font-size: 0.75rem; color: #94a3b8;">Cargando...</span>
+                <span id="radarFrameTime" style="font-size: 0.75rem; color: #94a3b8; text-align: right;">Cargando...</span>
             </div>
-            <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a></p>
+            <p id="radarNote" class="radar-note"></p>
+            <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a> · Mapa © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></p>
         </div>
 
         <!-- Trayectoria y ETA estimadas (cálculo propio sobre el radar) -->
@@ -98,7 +115,7 @@
             <div id="trajectory-content">Calculando trayectoria...</div>
         </div>
 
-        <!-- Condiciones Reales en Vivo (Open-Meteo) -->
+        <!-- Condiciones en Vivo -->
         <div class="card">
             <h3>Condiciones en Vivo — Córdoba Capital</h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;" id="data-source-note">Fuente: Open-Meteo (modelo meteorológico, dato real)</p>
@@ -108,11 +125,11 @@
                     <span id="liveStatusBadge" style="color: #10b981;">--</span>
                 </div>
                 <div class="timeline" id="timelineContainer"></div>
-                <p style="font-size: 0.7rem; color: #64748b; margin: 6px 0 0 0;">Próximas horas · % de probabilidad de lluvia</p>
+                <p style="font-size: 0.7rem; color: #64748b; margin: 6px 0 0 0;" id="timelineNote">Próximas horas · % de probabilidad de lluvia</p>
             </div>
             <div class="grid">
                 <div class="metric"><span>TEMPERATURA</span><strong id="temp">--</strong></div>
-                <div class="metric"><span>GRANIZO</span><strong id="hail">--</strong></div>
+                <div class="metric"><span>GRANIZO (MODELO)</span><strong id="hail">--</strong></div>
                 <div class="metric"><span>RÁFAGAS</span><strong id="wind">--</strong></div>
                 <div class="metric"><span>PRECIPITACIÓN</span><strong id="rain">--</strong></div>
             </div>
@@ -130,8 +147,8 @@
 
         <!-- Índice de Riesgo de Granizo -->
         <div class="card">
-            <h3>Índice de Riesgo de Granizo</h3>
-            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
+            <h3>Índice de Riesgo de Granizo <span id="hail-mode-chip" class="chip" style="display:none;">Modo reducido</span></h3>
+            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;" id="hail-index-desc">
                 Combina energía convectiva (CAPE), altura del nivel de congelamiento, condición del modelo y ráfagas.
                 Es una <strong>estimación propia</strong>, no una confirmación de que esté cayendo granizo.
             </p>
@@ -178,10 +195,69 @@
     <script>
         const CORDOBA_LAT = -31.4201;
         const CORDOBA_LON = -64.1888;
+        const BACKEND = "https://clima-cordoba-bot.onrender.com";
+        const API_URL = BACKEND + "/api/live-weather";
+        const TRAJECTORY_API_URL = BACKEND + "/api/storm-trajectory";
 
-        // --- Radar de precipitación (RainViewer, gratis, sin API key) ---
-        let radarMap, radarLayer, radarFrames = [], radarHost = "", radarFrameIndex = 0;
-        let radarPlaying = false, radarAnimInterval = null;
+        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const fmt = (v, suf) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : (v + (suf || ""));
+
+        // fetch con tiempo máximo y sin caché del navegador (así nunca mostramos una respuesta vieja)
+        async function fetchJSON(url, timeoutMs) {
+            const ctrl = new AbortController();
+            const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+            try {
+                const res = await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return await res.json();
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        // --- Aviso de estado de los datos ---
+        function setBanner(kind, title, text) {
+            const el = document.getElementById('statusBanner');
+            if (!kind) { el.style.display = 'none'; el.className = 'status-banner'; el.innerHTML = ''; return; }
+            el.className = 'status-banner ' + kind;
+            el.innerHTML = `<strong>${title}</strong>${text}`;
+            el.style.display = 'block';
+        }
+
+        function setBadge(text, color) {
+            const b = document.getElementById('status-badge');
+            b.innerText = text;
+            b.style.background = color;
+        }
+
+        // =====================================================================
+        // Radar de precipitación (RainViewer, gratis, sin API key)
+        // =====================================================================
+        // Límites actuales del plan gratuito de RainViewer: zoom máx. 7 y pocos pedidos
+        // por minuto por IP. Por eso: al cargar solo se baja el fotograma más reciente,
+        // y la animación usa los últimos RADAR_ANIM_FRAMES (no los 13 de la lista).
+        const RADAR_ANIM_FRAMES = 6;
+        const RADAR_STALE_MIN = 30;   // si el fotograma más nuevo tiene más de esto, avisamos
+
+        let radarMap, radarLayers = [], radarFrames = [], radarHost = "", radarFrameIndex = 0;
+        let radarPlaying = false, radarAnimInterval = null, radarPreloading = false;
+        const radarState = { tileErrors: 0, sinLluvia: null };
+
+        function radarAnimStart() { return Math.max(0, radarFrames.length - RADAR_ANIM_FRAMES); }
+
+        function updateRadarNote() {
+            const el = document.getElementById('radarNote');
+            if (radarState.tileErrors > 0) {
+                el.className = 'radar-note warn';
+                el.innerText = "Algunos mosaicos del radar no cargaron (puede ser el límite de pedidos de RainViewer). Esperá un minuto y recargá.";
+            } else if (radarState.sinLluvia === true) {
+                el.className = 'radar-note';
+                el.innerText = "Sin precipitación detectada en el radar en el área de Córdoba (según el último análisis del servidor). Por eso el mapa se ve igual en cada fotograma.";
+            } else {
+                el.className = 'radar-note';
+                el.innerText = "";
+            }
+        }
 
         function initRadarMap() {
             radarMap = L.map('radarMap', { zoomControl: false, attributionControl: false })
@@ -198,65 +274,147 @@
             setInterval(fetchRadarFrames, 10 * 60 * 1000); // RainViewer actualiza cada 10 min
         }
 
+        function clearRadarLayers() {
+            radarLayers.forEach(l => { if (l) radarMap.removeLayer(l); });
+            radarLayers = [];
+        }
+
+        // Una capa por fotograma, creada solo cuando hace falta, y se alterna por opacidad
+        // (así la animación no parpadea ni deja el mapa en blanco entre cuadros).
+        function getRadarLayer(i) {
+            if (!radarLayers[i]) {
+                const url = radarHost + radarFrames[i].path + '/256/{z}/{x}/{y}/2/1_1.png';
+                const layer = L.tileLayer(url, { maxZoom: 7, maxNativeZoom: 7, opacity: 0, zIndex: 10 + i });
+                layer.on('load', () => { layer._radarReady = true; });
+                layer.on('tileerror', () => { radarState.tileErrors++; updateRadarNote(); });
+                layer.addTo(radarMap);
+                radarLayers[i] = layer;
+            }
+            return radarLayers[i];
+        }
+
+        function showRadarFrame(idx) {
+            const frame = radarFrames[idx];
+            if (!frame) return;
+            radarLayers.forEach(l => { if (l) l.setOpacity(0); });
+            getRadarLayer(idx).setOpacity(0.75);
+
+            const d = new Date(frame.time * 1000);
+            const horaArg = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Cordoba' });
+            const mins = Math.max(0, Math.round((Date.now() / 1000 - frame.time) / 60));
+            const esUltimo = idx === radarFrames.length - 1;
+            const el = document.getElementById('radarFrameTime');
+            if (esUltimo && mins > RADAR_STALE_MIN) {
+                el.innerText = `${horaArg} · ⚠ radar desactualizado (hace ${mins} min)`;
+                el.style.color = "#fcd34d";
+            } else {
+                el.innerText = `${horaArg} · hace ${mins} min` + (esUltimo ? " (último)" : "");
+                el.style.color = "#94a3b8";
+            }
+        }
+
         async function fetchRadarFrames() {
             try {
-                let res = await fetch('https://api.rainviewer.com/public/weather-maps.json');
-                let data = await res.json();
-                radarHost = data.host;
-                radarFrames = (data.radar && data.radar.past) || [];
-                if (radarFrames.length > 0) {
-                    radarFrameIndex = radarFrames.length - 1; // frame más reciente
-                    showRadarFrame(radarFrameIndex);
-                } else {
+                const data = await fetchJSON('https://api.rainviewer.com/public/weather-maps.json', 10000);
+                const frames = (data.radar && data.radar.past) || [];
+                if (frames.length === 0) {
                     document.getElementById('radarFrameTime').innerText = "Sin datos de radar";
+                    return;
                 }
+                const nuevoUltimo = frames[frames.length - 1].time;
+                const hayCambio = radarFrames.length === 0 || nuevoUltimo !== radarFrames[radarFrames.length - 1].time;
+
+                radarHost = data.host;
+                if (hayCambio) {
+                    stopRadarAnim();
+                    clearRadarLayers();
+                    radarFrames = frames;
+                    radarState.tileErrors = 0;
+                    radarFrameIndex = radarFrames.length - 1; // frame más reciente
+                    updateRadarNote();
+                }
+                showRadarFrame(radarFrames.length - 1);
             } catch (e) {
                 document.getElementById('radarFrameTime').innerText = "Radar no disponible";
             }
         }
 
-        function showRadarFrame(idx) {
-            let frame = radarFrames[idx];
-            if (!frame) return;
-            let tileUrl = radarHost + frame.path + '/256/{z}/{x}/{y}/2/1_1.png';
-            if (radarLayer) radarMap.removeLayer(radarLayer);
-            radarLayer = L.tileLayer(tileUrl, { maxZoom: 7, opacity: 0.75 }).addTo(radarMap);
-
-            let d = new Date(frame.time * 1000);
-            let horaArg = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Cordoba' });
-            let esUltimo = idx === radarFrames.length - 1;
-            document.getElementById('radarFrameTime').innerText = horaArg + (esUltimo ? " (ahora)" : "");
-        }
-
-        document.getElementById('radarPlayBtn').addEventListener('click', () => {
-            radarPlaying = !radarPlaying;
-            document.getElementById('radarPlayBtn').innerText = radarPlaying ? "⏸ Pausar" : "▶ Animar";
-            if (radarPlaying) {
-                radarAnimInterval = setInterval(() => {
-                    radarFrameIndex = (radarFrameIndex + 1) % radarFrames.length;
-                    showRadarFrame(radarFrameIndex);
-                }, 700);
-            } else {
-                clearInterval(radarAnimInterval);
+        function stopRadarAnim() {
+            radarPlaying = false;
+            clearInterval(radarAnimInterval);
+            radarAnimInterval = null;
+            const btn = document.getElementById('radarPlayBtn');
+            btn.innerText = "▶ Animar";
+            btn.disabled = false;
+            if (radarFrames.length) {
                 radarFrameIndex = radarFrames.length - 1;
                 showRadarFrame(radarFrameIndex);
             }
+        }
+
+        // Antes de animar, baja los fotogramas de la animación (con tope de espera)
+        // para que no queden cuadros en blanco la primera vuelta.
+        async function preloadAnimFrames() {
+            const esperas = [];
+            for (let i = radarAnimStart(); i < radarFrames.length; i++) {
+                const layer = getRadarLayer(i);
+                if (layer._radarReady) continue;
+                esperas.push(new Promise(res => layer.once('load', res)));
+            }
+            if (esperas.length) await Promise.race([Promise.all(esperas), sleep(8000)]);
+        }
+
+        document.getElementById('radarPlayBtn').addEventListener('click', async () => {
+            if (radarPreloading || radarFrames.length < 2) return;
+            if (radarPlaying) { stopRadarAnim(); return; }
+
+            const btn = document.getElementById('radarPlayBtn');
+            radarPreloading = true;
+            btn.disabled = true;
+            btn.innerText = "Cargando…";
+            await preloadAnimFrames();
+            radarPreloading = false;
+            btn.disabled = false;
+
+            radarPlaying = true;
+            btn.innerText = "⏸ Pausar";
+            radarFrameIndex = radarAnimStart();
+            showRadarFrame(radarFrameIndex);
+            radarAnimInterval = setInterval(() => {
+                radarFrameIndex++;
+                if (radarFrameIndex >= radarFrames.length) radarFrameIndex = radarAnimStart();
+                showRadarFrame(radarFrameIndex);
+            }, 700);
         });
 
         initRadarMap();
 
-        // --- Resto de los datos (Open-Meteo, vía nuestro backend) ---
-        const API_URL = "https://clima-cordoba-bot.onrender.com/api/live-weather";
-        const TRAJECTORY_API_URL = "https://clima-cordoba-bot.onrender.com/api/storm-trajectory";
+        // =====================================================================
+        // Trayectoria estimada (backend, sobre el radar)
+        // =====================================================================
+        function esSinLluvia(t) {
+            // "Sin lluvia" solo si la descarga del radar fue confiable (casi todos los mosaicos bien).
+            if (t.ok === true) return false;
+            const d = t.diagnostico;
+            if (!d || d.frames_con_senal_de_lluvia !== 0) return false;
+            const m = /^(\d+)\/(\d+)$/.exec(d.tiles_descargados_ok || "");
+            if (!m) return null;
+            return (Number(m[1]) / Number(m[2])) >= 0.8 ? true : null;
+        }
 
         async function fetchTrajectory() {
-            let box = document.getElementById('trajectory-content');
+            const box = document.getElementById('trajectory-content');
             try {
-                let res = await fetch(TRAJECTORY_API_URL);
-                let t = await res.json();
+                const t = await fetchJSON(TRAJECTORY_API_URL, 45000);
+                radarState.sinLluvia = esSinLluvia(t);
+                updateRadarNote();
 
                 if (t.ok === false) {
-                    box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}</p>`;
+                    if (radarState.sinLluvia === true) {
+                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">Ahora mismo no hay precipitación en el radar en el área de Córdoba, así que no hay una tormenta para seguir.</p>`;
+                    } else {
+                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}</p>`;
+                    }
                     return;
                 }
 
@@ -299,105 +457,171 @@
             }
         }
 
-        async function fetchWeatherData() {
+        // =====================================================================
+        // Clima en vivo (backend: Open-Meteo, o MET Norway de respaldo)
+        // =====================================================================
+        let lastWeather = null;   // último dato recibido (para no dejar la pantalla vacía si falla una consulta)
+        let weatherBusy = false;
+
+        function edadMinutos(data) {
+            if (!data || !data.fetched_at) return null;
+            const t = Date.parse(data.fetched_at);
+            if (Number.isNaN(t)) return null;
+            return Math.max(0, Math.round((Date.now() - t) / 60000));
+        }
+
+        function renderWeather(data) {
+            // Estado de la fuente: normal / respaldo / desactualizado
+            const edad = edadMinutos(data);
+            if (data.stale === true) {
+                setBadge(`Datos de hace ${Math.round(data.stale_minutes)} min`, "#b45309");
+                setBanner('stale', "No se pudo actualizar",
+                    `Fallaron las dos fuentes de datos (Open-Meteo y MET Norway). Se muestra el último dato real obtenido, de hace unos ${Math.round(data.stale_minutes)} min. Se reintenta solo.`);
+            } else if (data.degraded === true) {
+                setBadge("En vivo (fuente de respaldo)", "#0369a1");
+                setBanner('degraded', "Usando fuente de respaldo (MET Norway)",
+                    "Open-Meteo no está disponible en este momento. El respaldo no trae CAPE ni nivel de congelamiento, así que el índice de granizo está en <strong style=\"display:inline\">modo reducido</strong> y es menos preciso.");
+            } else {
+                setBadge("Sincronizado en Vivo", "#16a34a");
+                setBanner(null);
+            }
+
+            const sourceNoteEl = document.getElementById('data-source-note');
+            sourceNoteEl.innerText = data.source || "Fuente: Open-Meteo (modelo meteorológico, dato real)";
+
+            const c = data.current_conditions;
+            document.getElementById('currentLocText').innerText = "📍 Condición: " + c.condition_text;
+            document.getElementById('temp').innerText = fmt(c.temperature_c, "°C");
+            document.getElementById('hail').innerText = data.hail_possible ? "Posible" : "Sin indicios";
+            document.getElementById('wind').innerText = (c.wind_gusts_kmh === null || c.wind_gusts_kmh === undefined) ? "n/d" : (c.wind_gusts_kmh + " km/h");
+            document.getElementById('rain').innerText = fmt(c.precipitation_mm, " mm");
+
+            const alertColors = { "ninguna": "#10b981", "amarilla": "#eab308", "naranja": "#f97316", "roja": "#ef4444" };
+            const badge = document.getElementById('liveStatusBadge');
+            badge.innerText = data.alert_level === "ninguna" ? "Estable" : "Alerta " + data.alert_level;
+            badge.style.color = alertColors[data.alert_level] || "#10b981";
+
+            let timelineHtml = "";
+            (data.forecast_timeline || []).forEach((slot, i) => {
+                const stepClass = i === 0 ? "active" : (slot.precip_probability >= 50 ? "completed" : "");
+                timelineHtml += `
+                    <div class="timeline-step ${stepClass}">
+                        <div class="timeline-dot"></div>
+                        <div class="timeline-label">${slot.hour}<br>${slot.precip_probability ?? "--"}%</div>
+                    </div>`;
+            });
+            document.getElementById('timelineContainer').innerHTML = timelineHtml;
+            document.getElementById('timelineNote').innerText = data.degraded === true
+                ? "Próximas horas · lluvia prevista (aprox. del respaldo: 70% si se espera precipitación, 0% si no)"
+                : "Próximas horas · % de probabilidad de lluvia";
+
+            // Banner de posible granizo: es lo que indica el MODELO, no una confirmación.
+            const banner = document.getElementById('hailAlertBanner');
+            if (data.hail_possible === true) {
+                banner.style.display = "block";
+                document.getElementById('hailAlertTitle').innerText = data.degraded === true
+                    ? "El modelo de respaldo indica tormenta eléctrica"
+                    : "El modelo indica posible tormenta con granizo";
+                document.getElementById('hail').style.color = "#ef4444";
+            } else {
+                banner.style.display = "none";
+                document.getElementById('hail').style.color = "#38bdf8";
+            }
+
+            document.getElementById('smn-alerts').innerHTML =
+                `<div><strong>${c.condition_text}</strong><br><small style="color:#cbd5e1;">Humedad: ${fmt(c.humidity_pct, "%")} · Viento sostenido: ${fmt(c.wind_speed_kmh, " km/h")}</small></div>`;
+
+            // Índice de riesgo de granizo
+            const idx = data.hail_index;
+            document.getElementById('hail-mode-chip').style.display = data.degraded === true ? "inline-block" : "none";
+            if (idx) {
+                const nivelColors = { "Muy bajo": "#10b981", "Bajo": "#38bdf8", "Moderado": "#eab308", "Alto": "#ef4444" };
+                const color = nivelColors[idx.nivel] || "#10b981";
+                document.getElementById('hail-index-bar').style.width = idx.score + "%";
+                document.getElementById('hail-index-bar').style.background = color;
+                document.getElementById('hail-index-label').innerText = idx.nivel;
+                document.getElementById('hail-index-label').style.color = color;
+                document.getElementById('hail-index-score').innerText = idx.score + "/100";
+
+                let factorsHtml = "";
+                if (idx.factores && idx.factores.length > 0) {
+                    idx.factores.forEach(f => { factorsHtml += `<li>${f}</li>`; });
+                } else {
+                    factorsHtml = "<li>Sin factores de riesgo relevantes ahora</li>";
+                }
+                document.getElementById('hail-index-factors').innerHTML = factorsHtml;
+            }
+
+            let sync = "Última sincronización: " + data.last_update;
+            if (edad !== null) sync += ` · dato obtenido hace ${edad} min`;
+            document.getElementById('last-sync').innerText = sync;
+        }
+
+        // Carga con tolerancia al "arranque en frío": el servidor gratuito de Render se duerme
+        // tras 15 min sin visitas y tarda hasta ~1 min en despertar. En vez de mostrar un error,
+        // se explica y se reintenta solo.
+        async function loadWeather() {
+            if (weatherBusy) return;
+            weatherBusy = true;
             try {
-                let res = await fetch(API_URL);
-                let data = await res.json();
+                let data = null;
+                const MAX_INTENTOS = 5;
+                for (let intento = 1; intento <= MAX_INTENTOS && !data; intento++) {
+                    try {
+                        data = await fetchJSON(API_URL, 20000);
+                    } catch (e) {
+                        if (intento === 1 && !lastWeather) {
+                            setBadge("Conectando…", "#475569");
+                            setBanner('waking', "El servidor se está despertando",
+                                "Este servicio gratuito se duerme cuando nadie lo usa un rato. Puede tardar hasta 1 minuto en responder; se reintenta solo.");
+                        }
+                        if (intento < MAX_INTENTOS) await sleep(4000);
+                    }
+                }
+
+                if (!data) {
+                    if (lastWeather) {
+                        const e = edadMinutos(lastWeather);
+                        setBadge("Sin conexión con el servidor", "#b45309");
+                        setBanner('offline', "No se pudo contactar al servidor",
+                            `Se sigue mostrando el último dato recibido${e !== null ? " (de hace " + e + " min)" : ""}. Se reintenta solo cada minuto.`);
+                    } else {
+                        setBadge("Error de conexión", "#dc2626");
+                        setBanner('offline', "No se pudo contactar al servidor",
+                            "Revisá tu conexión o probá recargar en un minuto. Mientras tanto, el parte oficial está en <a href=\"https://www.smn.gob.ar/pronostico/cordoba\" target=\"_blank\" rel=\"noopener\" style=\"color:#fecaca;\">smn.gob.ar</a>.");
+                    }
+                    return;
+                }
 
                 if (data.ok === false) {
                     document.getElementById('currentLocText').innerText = "📍 Sin datos en este momento";
                     document.getElementById('smn-alerts').innerHTML =
-                        `<p style="color:#f87171;">No se pudo obtener el pronóstico ahora mismo. Probá recargar en un minuto, o mirá el <a href="${data.smn_official_url}" target="_blank" style="color:#38bdf8;">parte oficial del SMN</a>.</p>`;
+                        `<p style="color:#f87171;">No se pudo obtener el pronóstico ahora mismo (fallaron las dos fuentes de datos). Se reintenta solo, o mirá el <a href="${data.smn_official_url}" target="_blank" rel="noopener" style="color:#38bdf8;">parte oficial del SMN</a>.</p>`;
                     document.getElementById('last-sync').innerText = "Última sincronización: " + data.last_update;
+                    setBadge("Sin datos", "#dc2626");
+                    setBanner('offline', "Sin datos de pronóstico",
+                        "Open-Meteo y el respaldo MET Norway no respondieron. Se reintenta solo cada minuto.");
                     return;
                 }
 
-                // Si el último pedido a Open-Meteo falló, el backend nos manda el
-                // último dato real que sí tuvo, marcado como "stale" (viejo), o
-                // bien un dato fresco de la fuente de respaldo (MET Norway),
-                // marcado como "degraded". Mostramos un aviso distinto para
-                // cada caso en vez de fingir que todo es igual de preciso.
-                let badgeEl = document.getElementById('status-badge');
-                if (data.stale === true) {
-                    badgeEl.innerText = `Datos de hace ${data.stale_minutes} min (no se pudo actualizar)`;
-                    badgeEl.style.background = "#b45309";
-                } else if (data.degraded === true) {
-                    badgeEl.innerText = "En vivo (fuente de respaldo)";
-                    badgeEl.style.background = "#0369a1";
-                } else {
-                    badgeEl.innerText = "Sincronizado en Vivo";
-                    badgeEl.style.background = "#16a34a";
-                }
-
-                let sourceNoteEl = document.getElementById('data-source-note');
-                if (sourceNoteEl) {
-                    sourceNoteEl.innerText = data.source || "Fuente: Open-Meteo (modelo meteorológico, dato real)";
-                }
-
-                let c = data.current_conditions;
-                document.getElementById('currentLocText').innerText = "📍 Condición: " + c.condition_text;
-                document.getElementById('temp').innerText = c.temperature_c + "°C";
-                document.getElementById('hail').innerText = data.hail_possible ? "Posible" : "Nulo";
-                document.getElementById('wind').innerText = c.wind_gusts_kmh + " km/h";
-                document.getElementById('rain').innerText = c.precipitation_mm + " mm";
-
-                const alertColors = { "ninguna": "#10b981", "amarilla": "#eab308", "naranja": "#f97316", "roja": "#ef4444" };
-                let badge = document.getElementById('liveStatusBadge');
-                badge.innerText = data.alert_level === "ninguna" ? "Estable" : "Alerta " + data.alert_level;
-                badge.style.color = alertColors[data.alert_level] || "#10b981";
-
-                let timelineHtml = "";
-                (data.forecast_timeline || []).forEach((slot, idx) => {
-                    let stepClass = idx === 0 ? "active" : (slot.precip_probability >= 50 ? "completed" : "");
-                    timelineHtml += `
-                        <div class="timeline-step ${stepClass}">
-                            <div class="timeline-dot"></div>
-                            <div class="timeline-label">${slot.hour}<br>${slot.precip_probability ?? "--"}%</div>
-                        </div>`;
-                });
-                document.getElementById('timelineContainer').innerHTML = timelineHtml;
-
-                let banner = document.getElementById('hailAlertBanner');
-                if (data.hail_possible === true) {
-                    banner.style.display = "block";
-                    document.getElementById('hail').style.color = "#ef4444";
-                } else {
-                    banner.style.display = "none";
-                    document.getElementById('hail').style.color = "#38bdf8";
-                }
-
-                document.getElementById('smn-alerts').innerHTML =
-                    `<div><strong>${c.condition_text}</strong><br><small style="color:#cbd5e1;">Humedad: ${c.humidity_pct}% · Viento sostenido: ${c.wind_speed_kmh} km/h</small></div>`;
-
-                // Índice de riesgo de granizo
-                let idx = data.hail_index;
-                if (idx) {
-                    const nivelColors = { "Muy bajo": "#10b981", "Bajo": "#38bdf8", "Moderado": "#eab308", "Alto": "#ef4444" };
-                    let color = nivelColors[idx.nivel] || "#10b981";
-                    document.getElementById('hail-index-bar').style.width = idx.score + "%";
-                    document.getElementById('hail-index-bar').style.background = color;
-                    document.getElementById('hail-index-label').innerText = idx.nivel;
-                    document.getElementById('hail-index-label').style.color = color;
-                    document.getElementById('hail-index-score').innerText = idx.score + "/100";
-
-                    let factorsHtml = "";
-                    if (idx.factores && idx.factores.length > 0) {
-                        idx.factores.forEach(f => { factorsHtml += `<li>${f}</li>`; });
-                    } else {
-                        factorsHtml = "<li>Sin factores de riesgo relevantes ahora</li>";
-                    }
-                    document.getElementById('hail-index-factors').innerHTML = factorsHtml;
-                }
-
-                document.getElementById('last-sync').innerText = "Última sincronización: " + data.last_update;
-            } catch (e) {
-                document.getElementById('status-badge').innerText = "Error de conexión";
-                document.getElementById('status-badge').style.background = "#dc2626";
+                lastWeather = data;
+                renderWeather(data);
+            } finally {
+                weatherBusy = false;
             }
         }
 
-        setInterval(fetchWeatherData, 60000);
-        fetchWeatherData();
+        setInterval(loadWeather, 60000);
+        loadWeather();
+
+        // Al volver a la pestaña (o al celular desde segundo plano), refrescar enseguida.
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                loadWeather();
+                fetchTrajectory();
+                fetchRadarFrames();
+            }
+        });
     </script>
 </body>
 </html>

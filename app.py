@@ -129,6 +129,170 @@ def calcular_indice_granizo(cape, freezing_level_m, weather_code, wind_gusts_kmh
 
 
 # ============================================================
+# FUENTE DE RESPALDO: MET Norway (gratis, sin API key)
+# ============================================================
+# Open-Meteo viene devolviendo 429 de forma persistente, consistente con que
+# el plan free de Render comparte IP de salida con otros proyectos y ESA ip
+# ya está rate-limiteada en Open-Meteo (no necesariamente por nuestro propio
+# tráfico). En vez de depender de un solo proveedor, agregamos una segunda
+# fuente completamente independiente (otro servidor, otro esquema de límites)
+# para cuando la primera no responda. MET Norway no tiene CAPE ni nivel de
+# congelamiento, así que el índice de granizo pasa a un "modo reducido"
+# explícito, menos preciso pero mejor que no mostrar nada.
+
+METNO_URL = (
+    "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+    f"?lat={LAT}&lon={LON}"
+)
+# MET Norway pide identificar la app en el User-Agent (no hace falta API key).
+METNO_HEADERS = {
+    "User-Agent": "ClimaCordobaPro/1.0 github.com/seryeil/clima-cordoba-bot"
+}
+
+METNO_SYMBOL_MAP = {
+    "clearsky": "Despejado",
+    "fair": "Mayormente despejado",
+    "partlycloudy": "Parcialmente nublado",
+    "cloudy": "Nublado",
+    "fog": "Niebla",
+    "lightrainshowers": "Chubascos débiles",
+    "rainshowers": "Chubascos moderados",
+    "heavyrainshowers": "Chubascos intensos",
+    "lightrain": "Lluvia débil",
+    "rain": "Lluvia moderada",
+    "heavyrain": "Lluvia intensa",
+    "lightsleet": "Aguanieve débil",
+    "sleet": "Aguanieve",
+    "lightsnow": "Nieve débil",
+    "snow": "Nieve moderada",
+    "heavysnow": "Nieve intensa",
+    "thunderstorm": "Tormenta",
+    "lightrainshowersandthunder": "Chubascos con tormenta",
+    "rainshowersandthunder": "Chubascos con tormenta",
+    "heavyrainshowersandthunder": "Chubascos intensos con tormenta",
+    "rainandthunder": "Lluvia con tormenta",
+    "heavyrainandthunder": "Lluvia intensa con tormenta",
+    "lightssleetshowersandthunder": "Aguanieve con tormenta",
+    "lightsnowshowersandthunder": "Nieve débil con tormenta",
+}
+
+
+def _metno_symbol_a_texto(symbol_code):
+    base = (symbol_code or "").split("_")[0]  # saca sufijo _day/_night/_polartwilight
+    return METNO_SYMBOL_MAP.get(base, "Condición desconocida (respaldo MET Norway)")
+
+
+def _metno_tiene_tormenta(symbol_code):
+    return "thunder" in (symbol_code or "")
+
+
+def calcular_indice_granizo_reducido(symbol_code, wind_gusts_kmh):
+    """
+    Versión reducida del índice de granizo, usada solo cuando la fuente
+    principal (Open-Meteo) falló y estamos usando el respaldo MET Norway,
+    que no da CAPE ni nivel de congelamiento. El puntaje máximo alcanzable
+    es más bajo a propósito, y siempre se marca como "modo reducido" para
+    no confundirlo con el índice completo.
+    """
+    score = 0
+    detail = ["Modo reducido (respaldo MET Norway): sin CAPE ni nivel de congelamiento disponibles"]
+
+    if _metno_tiene_tormenta(symbol_code):
+        score += 40
+        detail.append("modelo de respaldo indica tormenta eléctrica")
+
+    if wind_gusts_kmh is not None:
+        if wind_gusts_kmh >= 70:
+            score += 15
+            detail.append(f"ráfagas fuertes ({wind_gusts_kmh:.0f} km/h)")
+        elif wind_gusts_kmh >= 50:
+            score += 8
+            detail.append(f"ráfagas moderadas ({wind_gusts_kmh:.0f} km/h)")
+
+    score = min(score, 100)
+    if score >= 40:
+        nivel = "Moderado"
+    elif score >= 15:
+        nivel = "Bajo"
+    else:
+        nivel = "Muy bajo"
+
+    return {"score": score, "nivel": nivel, "factores": detail}
+
+
+def _fetch_metno():
+    """Pedido a la fuente de respaldo. Tira excepción si también falla,
+    igual que el pedido principal, para que el llamador decida qué hacer."""
+    resp = requests.get(METNO_URL, headers=METNO_HEADERS, timeout=8)
+    resp.raise_for_status()
+    body = resp.json()
+    series = body["properties"]["timeseries"]
+    ahora = series[0]
+    details = ahora["data"]["instant"]["details"]
+
+    next1 = ahora["data"].get("next_1_hours", {})
+    symbol_code = next1.get("summary", {}).get("symbol_code", "")
+    precip_1h = next1.get("details", {}).get("precipitation_amount")
+
+    wind_speed_ms = details.get("wind_speed")
+    wind_speed_kmh = wind_speed_ms * 3.6 if wind_speed_ms is not None else None
+    # El endpoint "compact" de MET Norway no siempre trae ráfaga; si no está,
+    # queda en None (no inventamos un valor) y el índice reducido lo nota.
+    wind_gust_ms = details.get("wind_speed_of_gust")
+    wind_gust_kmh = wind_gust_ms * 3.6 if wind_gust_ms is not None else None
+
+    condition_text = _metno_symbol_a_texto(symbol_code)
+    hail_possible = _metno_tiene_tormenta(symbol_code)
+    indice_granizo = calcular_indice_granizo_reducido(symbol_code, wind_gust_kmh)
+
+    if indice_granizo["nivel"] in ("Alto", "Moderado"):
+        alert_level = "amarilla"
+    else:
+        alert_level = "ninguna"
+
+    forecast_timeline = []
+    for entry in series[1:5]:
+        t = entry["time"]  # ISO UTC, ej "2026-10-06T12:00:00Z"
+        try:
+            hora_utc = datetime.strptime(t, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            hora_local = hora_utc.astimezone(arg_tz)
+            hour_label = hora_local.strftime("%H:%M")
+        except Exception:
+            hour_label = "--:--"
+        n1 = entry["data"].get("next_1_hours", {})
+        precip_amt = n1.get("details", {}).get("precipitation_amount")
+        # MET Norway (compact) no da probabilidad directa de precipitación;
+        # usamos la cantidad prevista como señal aproximada (es una
+        # estimación nuestra, no el dato crudo de probabilidad de Open-Meteo).
+        prob_aprox = 70 if (precip_amt is not None and precip_amt > 0) else 0
+        forecast_timeline.append({
+            "hour": hour_label,
+            "precip_probability": prob_aprox,
+        })
+
+    return {
+        "source": "MET Norway (respaldo: Open-Meteo no disponible en este momento; sin CAPE ni nivel de congelamiento)",
+        "current_conditions": {
+            "temperature_c": details.get("air_temperature"),
+            "humidity_pct": details.get("relative_humidity"),
+            "wind_speed_kmh": round(wind_speed_kmh, 1) if wind_speed_kmh is not None else None,
+            "wind_gusts_kmh": round(wind_gust_kmh, 1) if wind_gust_kmh is not None else None,
+            "precipitation_mm": precip_1h if precip_1h is not None else 0,
+            "condition_text": condition_text,
+            "condition_code": symbol_code,
+            "cape": None,
+            "freezing_level_m": None,
+        },
+        "hail_index": indice_granizo,
+        "alert_level": alert_level,
+        "hail_possible": hail_possible,
+        "forecast_timeline": forecast_timeline,
+        "degraded": True,
+        "degraded_reason": "Open-Meteo no respondió; usando MET Norway como respaldo (sin CAPE ni nivel de congelamiento, el índice de granizo es menos preciso ahora).",
+    }
+
+
+# ============================================================
 # TRAYECTORIA Y ETA DE TORMENTA (radar real, cálculo propio)
 # ============================================================
 # Idea: bajamos una grilla de 3x3 tiles del radar de RainViewer alrededor de
@@ -440,6 +604,7 @@ def live_weather():
             "alert_level": alert_level,
             "hail_possible": hail_possible,
             "forecast_timeline": forecast_timeline,
+            "degraded": False,
             "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
             "last_update": current_time_str,
             "ok": True,
@@ -451,27 +616,43 @@ def live_weather():
         _weather_last_good["ts"] = now_ts
         _weather_cache["ok"] = True
 
-    except Exception as e:
-        # Si Open-Meteo falla (ej. límite de la IP compartida de Render, no
-        # necesariamente nuestro propio tráfico), preferimos mostrar el
-        # último dato real que sí tuvimos, marcado como desactualizado, en
-        # vez de dejar la pantalla vacía. Solo si nunca tuvimos ningún dato
-        # bueno mostramos el error explícito.
-        if _weather_last_good["data"] is not None:
-            data = dict(_weather_last_good["data"])
-            edad_min = round((now_ts - _weather_last_good["ts"]) / 60, 1)
-            data["stale"] = True
-            data["stale_minutes"] = edad_min
-            data["stale_reason"] = "No se pudo actualizar ahora (probable límite temporal de la fuente de datos); mostrando el último dato real obtenido."
-        else:
+    except Exception as e_primary:
+        # Open-Meteo no respondió (ej. 429 por IP compartida de Render, no
+        # necesariamente por nuestro propio tráfico). Antes de resignarnos a
+        # mostrar datos viejos, probamos una fuente de respaldo totalmente
+        # independiente (otro servidor, otro esquema de límites).
+        try:
+            fallback = _fetch_metno()
             data = {
-                "ok": False,
-                "error": "No se pudo obtener el pronóstico en este momento.",
-                "detail": str(e),
+                **fallback,
                 "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
                 "last_update": current_time_str,
+                "ok": True,
+                "stale": False,
             }
-        _weather_cache["ok"] = False
+            _weather_last_good["data"] = data
+            _weather_last_good["ts"] = now_ts
+            _weather_cache["ok"] = True
+        except Exception as e_fallback:
+            # Tampoco funcionó el respaldo: mostramos el último dato real
+            # que sí tuvimos (de cualquiera de las dos fuentes), marcado
+            # como desactualizado. Solo si nunca tuvimos ningún dato bueno
+            # mostramos el error explícito.
+            if _weather_last_good["data"] is not None:
+                data = dict(_weather_last_good["data"])
+                edad_min = round((now_ts - _weather_last_good["ts"]) / 60, 1)
+                data["stale"] = True
+                data["stale_minutes"] = edad_min
+                data["stale_reason"] = "No se pudo actualizar ahora (fallaron Open-Meteo y el respaldo MET Norway); mostrando el último dato real obtenido."
+            else:
+                data = {
+                    "ok": False,
+                    "error": "No se pudo obtener el pronóstico en este momento (fallaron ambas fuentes).",
+                    "detail": f"Open-Meteo: {e_primary} | MET Norway: {e_fallback}",
+                    "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
+                    "last_update": current_time_str,
+                }
+            _weather_cache["ok"] = False
 
     _weather_cache["data"] = data
     _weather_cache["ts"] = now_ts

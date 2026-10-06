@@ -1,9 +1,11 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import math
+import os
+import threading
 import time
 import requests
 from PIL import Image
@@ -30,6 +32,35 @@ CACHE_TTL_WEATHER_OK = 180     # 3 min: si el último pedido salió bien, no rec
 CACHE_TTL_WEATHER_ERROR = 20   # 20 s: si falló (ej. 429), reintentamos pronto en vez de quedarnos
                                # pegados al error por 3 min enteros
 CACHE_TTL_TRAJECTORY = 300    # 5 min (coincide con el refresco del frontend)
+
+# Evita que varios pedidos simultáneos (ej. el servidor recién despertó y
+# llegan 5 clientes juntos) disparen cada uno su propio pedido a las fuentes.
+_refresh_lock = threading.Lock()
+
+_started_ts = time.time()
+
+# ============================================================
+# CIRCUIT BREAKER para Open-Meteo
+# ============================================================
+# Si Open-Meteo responde 429 (rate limit por IP compartida de Render), seguir
+# insistiendo en cada pedido solo suma latencia (reintento + espera) y empeora
+# el límite. En vez de eso, "abrimos el breaker": durante un rato salteamos
+# Open-Meteo y vamos directo a la fuente de respaldo. Pasado el tiempo,
+# probamos de nuevo una vez (si funciona, el breaker se cierra).
+BREAKER_COOLDOWN_429 = 600     # 10 min tras un 429 (si el servidor no indica Retry-After)
+BREAKER_COOLDOWN_ERROR = 120   # 2 min tras otro tipo de error (timeout, 5xx, JSON roto)
+BREAKER_MIN = 60               # nunca menos de 1 min
+BREAKER_MAX = 3600             # nunca más de 1 h (por si Retry-After viene exagerado)
+_breaker = {"open_until": 0.0, "motivo": None}
+
+# Estadísticas por fuente, solo para /api/health (diagnóstico).
+def _nuevas_stats():
+    return {"ok_count": 0, "error_count": 0, "last_ok_ts": None, "last_error_ts": None, "last_error": None}
+
+_source_stats = {"open-meteo": _nuevas_stats(), "metno": _nuevas_stats()}
+
+# Si el dato bueno más reciente tiene más de esto, el estado pasa a "desactualizado".
+HEALTH_MAX_AGE_OK = 900  # 15 min
 
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -272,6 +303,7 @@ def _fetch_metno():
 
     return {
         "source": "MET Norway (respaldo: Open-Meteo no disponible en este momento; sin CAPE ni nivel de congelamiento)",
+        "source_id": "metno",
         "current_conditions": {
             "temperature_c": details.get("air_temperature"),
             "humidity_pct": details.get("relative_humidity"),
@@ -521,106 +553,180 @@ def home():
     return "🤖 Bot meteorológico Córdoba - API activa."
 
 
-def _fetch_open_meteo_con_reintento():
-    """Un pedido a Open-Meteo, con un reintento corto si falla (sobre todo
-    pensado para un 429 pasajero por compartir IP de salida en Render)."""
+# ============================================================
+# OPEN-METEO: pedido, circuit breaker y estadísticas
+# ============================================================
+
+class OpenMeteoRateLimited(Exception):
+    """Open-Meteo devolvió 429. Lleva el Retry-After (si lo mandó) para dimensionar la pausa."""
+
+    def __init__(self, retry_after=None):
+        super().__init__("429 Too Many Requests (Open-Meteo)")
+        self.retry_after = retry_after
+
+
+def _parse_retry_after(valor):
     try:
-        resp = requests.get(OPEN_METEO_URL, timeout=8)
-        resp.raise_for_status()
-        return resp.json()
+        v = int(float(valor))
+        return v if v > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_open_meteo():
+    resp = requests.get(OPEN_METEO_URL, timeout=8)
+    if resp.status_code == 429:
+        raise OpenMeteoRateLimited(_parse_retry_after(resp.headers.get("Retry-After")))
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_open_meteo_con_reintento():
+    """Un pedido a Open-Meteo. Un 429 NO se reintenta (insistir al instante no sirve
+    y empeora el límite; de eso se encarga el circuit breaker). Otros errores
+    (timeout, 5xx) sí tienen un reintento corto."""
+    try:
+        return _fetch_open_meteo()
+    except OpenMeteoRateLimited:
+        raise
     except Exception:
         time.sleep(1.5)
-        resp = requests.get(OPEN_METEO_URL, timeout=8)
-        resp.raise_for_status()
-        return resp.json()
+        return _fetch_open_meteo()
 
 
-@app.route('/api/live-weather', methods=['GET'])
-def live_weather():
-    now_ts = time.time()
+def _breaker_abierto(now_ts):
+    return now_ts < _breaker["open_until"]
+
+
+def _abrir_breaker(now_ts, segundos, motivo):
+    segundos = max(BREAKER_MIN, min(BREAKER_MAX, segundos))
+    _breaker["open_until"] = now_ts + segundos
+    _breaker["motivo"] = motivo
+
+
+def _cerrar_breaker():
+    _breaker["open_until"] = 0.0
+    _breaker["motivo"] = None
+
+
+def _registrar_ok(fuente, now_ts):
+    s = _source_stats[fuente]
+    s["ok_count"] += 1
+    s["last_ok_ts"] = now_ts
+
+
+def _registrar_error(fuente, now_ts, e):
+    s = _source_stats[fuente]
+    s["error_count"] += 1
+    s["last_error_ts"] = now_ts
+    s["last_error"] = str(e)[:200]
+
+
+def _armar_datos_open_meteo(meteo, now, current_time_str):
+    """Convierte la respuesta cruda de Open-Meteo en el payload que consume el frontend."""
+    current = meteo["current"]
+    code = current.get("weather_code", 0)
+    condition_text = WEATHER_CODE_MAP.get(code, "Condición desconocida")
+    hail_possible = code in HAIL_CODES
+
+    wind_gusts = current.get("wind_gusts_10m", 0) or 0
+    precipitation = current.get("precipitation", 0) or 0
+
+    # Buscamos CAPE y nivel de congelamiento de la hora actual en el bloque hourly
+    hourly_times = meteo.get("hourly", {}).get("time", [])
+    hourly_probs = meteo.get("hourly", {}).get("precipitation_probability", [])
+    hourly_cape = meteo.get("hourly", {}).get("cape", [])
+    hourly_freezing = meteo.get("hourly", {}).get("freezing_level_height", [])
+
+    current_hour_str = now.strftime("%Y-%m-%dT%H:00")
+    start_idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
+
+    cape_now = hourly_cape[start_idx] if start_idx < len(hourly_cape) else None
+    freezing_now = hourly_freezing[start_idx] if start_idx < len(hourly_freezing) else None
+
+    indice_granizo = calcular_indice_granizo(cape_now, freezing_now, code, wind_gusts)
+
+    # Heurística de severidad general (combina el índice de granizo con lluvia/viento)
+    if indice_granizo["nivel"] == "Alto":
+        alert_level = "naranja"
+    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 60 or precipitation >= 10:
+        alert_level = "amarilla"
+    else:
+        alert_level = "ninguna"
+
+    # Timeline real: próximas horas con probabilidad de precipitación (dato real)
+    forecast_timeline = []
+    for h in range(start_idx, min(start_idx + 4, len(hourly_times))):
+        hour_label = hourly_times[h].split("T")[1]
+        forecast_timeline.append({
+            "hour": hour_label,
+            "precip_probability": hourly_probs[h] if h < len(hourly_probs) else None
+        })
+
+    return {
+        "source": "Open-Meteo (datos reales, modelo meteorológico, no es un parte oficial del SMN)",
+        "source_id": "open-meteo",
+        "current_conditions": {
+            "temperature_c": current.get("temperature_2m"),
+            "humidity_pct": current.get("relative_humidity_2m"),
+            "wind_speed_kmh": current.get("wind_speed_10m"),
+            "wind_gusts_kmh": wind_gusts,
+            "precipitation_mm": precipitation,
+            "condition_text": condition_text,
+            "condition_code": code,
+            "cape": cape_now,
+            "freezing_level_m": freezing_now,
+        },
+        "hail_index": indice_granizo,
+        "alert_level": alert_level,
+        "hail_possible": hail_possible,
+        "forecast_timeline": forecast_timeline,
+        "degraded": False,
+        "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
+        "last_update": current_time_str,
+        "ok": True,
+        "stale": False,
+    }
+
+
+def _clima_desde_cache(now_ts):
     cache_ttl = CACHE_TTL_WEATHER_OK if _weather_cache.get("ok") else CACHE_TTL_WEATHER_ERROR
     if _weather_cache["data"] is not None and (now_ts - _weather_cache["ts"]) < cache_ttl:
-        return jsonify(_weather_cache["data"])
+        return _weather_cache["data"]
+    return None
 
+
+def _refrescar_clima(now_ts):
+    """Obtiene datos frescos: Open-Meteo (si el breaker lo permite) -> MET Norway
+    -> último dato bueno marcado como desactualizado -> error explícito."""
     now = datetime.now(arg_tz)
     current_time_str = now.strftime("%d/%m/%Y %H:%M:%S")
+    fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    try:
-        meteo = _fetch_open_meteo_con_reintento()
+    data = None
+    error_primary = None
 
-        current = meteo["current"]
-        code = current.get("weather_code", 0)
-        condition_text = WEATHER_CODE_MAP.get(code, "Condición desconocida")
-        hail_possible = code in HAIL_CODES
+    if _breaker_abierto(now_ts):
+        resto = int(_breaker["open_until"] - now_ts)
+        error_primary = f"Open-Meteo en pausa ~{resto}s más ({_breaker['motivo']})"
+    else:
+        try:
+            meteo = _fetch_open_meteo_con_reintento()
+            data = _armar_datos_open_meteo(meteo, now, current_time_str)
+            _registrar_ok("open-meteo", now_ts)
+            _cerrar_breaker()
+        except Exception as e:
+            error_primary = e
+            _registrar_error("open-meteo", now_ts, e)
+            if isinstance(e, OpenMeteoRateLimited):
+                _abrir_breaker(now_ts, e.retry_after or BREAKER_COOLDOWN_429, "429 Too Many Requests")
+            else:
+                _abrir_breaker(now_ts, BREAKER_COOLDOWN_ERROR, str(e)[:120])
 
-        wind_gusts = current.get("wind_gusts_10m", 0) or 0
-        precipitation = current.get("precipitation", 0) or 0
-
-        # Buscamos CAPE y nivel de congelamiento de la hora actual en el bloque hourly
-        hourly_times = meteo.get("hourly", {}).get("time", [])
-        hourly_probs = meteo.get("hourly", {}).get("precipitation_probability", [])
-        hourly_cape = meteo.get("hourly", {}).get("cape", [])
-        hourly_freezing = meteo.get("hourly", {}).get("freezing_level_height", [])
-
-        current_hour_str = now.strftime("%Y-%m-%dT%H:00")
-        start_idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
-
-        cape_now = hourly_cape[start_idx] if start_idx < len(hourly_cape) else None
-        freezing_now = hourly_freezing[start_idx] if start_idx < len(hourly_freezing) else None
-
-        indice_granizo = calcular_indice_granizo(cape_now, freezing_now, code, wind_gusts)
-
-        # Heurística de severidad general (combina el índice de granizo con lluvia/viento)
-        if indice_granizo["nivel"] == "Alto":
-            alert_level = "naranja"
-        elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 60 or precipitation >= 10:
-            alert_level = "amarilla"
-        else:
-            alert_level = "ninguna"
-
-        # Timeline real: próximas horas con probabilidad de precipitación (dato real)
-        forecast_timeline = []
-        for h in range(start_idx, min(start_idx + 4, len(hourly_times))):
-            hour_label = hourly_times[h].split("T")[1]
-            forecast_timeline.append({
-                "hour": hour_label,
-                "precip_probability": hourly_probs[h] if h < len(hourly_probs) else None
-            })
-
-        data = {
-            "source": "Open-Meteo (datos reales, modelo meteorológico, no es un parte oficial del SMN)",
-            "current_conditions": {
-                "temperature_c": current.get("temperature_2m"),
-                "humidity_pct": current.get("relative_humidity_2m"),
-                "wind_speed_kmh": current.get("wind_speed_10m"),
-                "wind_gusts_kmh": wind_gusts,
-                "precipitation_mm": precipitation,
-                "condition_text": condition_text,
-                "condition_code": code,
-                "cape": cape_now,
-                "freezing_level_m": freezing_now,
-            },
-            "hail_index": indice_granizo,
-            "alert_level": alert_level,
-            "hail_possible": hail_possible,
-            "forecast_timeline": forecast_timeline,
-            "degraded": False,
-            "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
-            "last_update": current_time_str,
-            "ok": True,
-            "stale": False,
-        }
-        # Éxito: lo guardamos como el último dato bueno, para poder usarlo
-        # si el próximo pedido falla (ej. 429 por IP compartida en Render).
-        _weather_last_good["data"] = data
-        _weather_last_good["ts"] = now_ts
-        _weather_cache["ok"] = True
-
-    except Exception as e_primary:
+    if data is None:
         # Open-Meteo no respondió (ej. 429 por IP compartida de Render, no
-        # necesariamente por nuestro propio tráfico). Antes de resignarnos a
-        # mostrar datos viejos, probamos una fuente de respaldo totalmente
-        # independiente (otro servidor, otro esquema de límites).
+        # necesariamente por nuestro propio tráfico) o está en pausa. Antes de
+        # resignarnos a mostrar datos viejos, probamos la fuente de respaldo.
         try:
             fallback = _fetch_metno()
             data = {
@@ -630,10 +736,9 @@ def live_weather():
                 "ok": True,
                 "stale": False,
             }
-            _weather_last_good["data"] = data
-            _weather_last_good["ts"] = now_ts
-            _weather_cache["ok"] = True
+            _registrar_ok("metno", now_ts)
         except Exception as e_fallback:
+            _registrar_error("metno", now_ts, e_fallback)
             # Tampoco funcionó el respaldo: mostramos el último dato real
             # que sí tuvimos (de cualquiera de las dos fuentes), marcado
             # como desactualizado. Solo si nunca tuvimos ningún dato bueno
@@ -648,16 +753,131 @@ def live_weather():
                 data = {
                     "ok": False,
                     "error": "No se pudo obtener el pronóstico en este momento (fallaron ambas fuentes).",
-                    "detail": f"Open-Meteo: {e_primary} | MET Norway: {e_fallback}",
+                    "detail": f"Open-Meteo: {error_primary} | MET Norway: {e_fallback}",
                     "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
                     "last_update": current_time_str,
                 }
             _weather_cache["ok"] = False
+            _weather_cache["data"] = data
+            _weather_cache["ts"] = now_ts
+            return data
 
+    # Éxito (de cualquiera de las dos fuentes): lo guardamos como el último dato
+    # bueno, para poder usarlo si el próximo pedido falla.
+    data["fetched_at"] = fetched_at
+    _weather_last_good["data"] = data
+    _weather_last_good["ts"] = now_ts
+    _weather_cache["ok"] = True
     _weather_cache["data"] = data
     _weather_cache["ts"] = now_ts
+    return data
 
-    return jsonify(data)
+
+def obtener_clima():
+    """Punto único de acceso al clima (lo usan /api/live-weather, /api/health?warm=1
+    y el precalentamiento al arrancar). Caché + lock anti-avalancha."""
+    now_ts = time.time()
+    cached = _clima_desde_cache(now_ts)
+    if cached is not None:
+        return cached
+    with _refresh_lock:
+        # Otro pedido pudo haber refrescado mientras esperábamos el lock.
+        now_ts = time.time()
+        cached = _clima_desde_cache(now_ts)
+        if cached is not None:
+            return cached
+        return _refrescar_clima(now_ts)
+
+
+@app.route('/api/live-weather', methods=['GET'])
+def live_weather():
+    return jsonify(obtener_clima())
+
+
+# ============================================================
+# /api/health: estado del servicio (para monitoreo y para mantener despierto Render)
+# ============================================================
+
+def _iso_utc(ts):
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
+
+
+def _stats_publicas(fuente):
+    s = _source_stats[fuente]
+    return {
+        "ok_count": s["ok_count"],
+        "error_count": s["error_count"],
+        "last_ok_utc": _iso_utc(s["last_ok_ts"]),
+        "last_error_utc": _iso_utc(s["last_error_ts"]),
+        "last_error": s["last_error"],
+    }
+
+
+def _estado_servicio(now_ts):
+    """ok | degradado | desactualizado | sin_datos"""
+    lg = _weather_last_good["data"]
+    if lg is None:
+        return "sin_datos", None
+    edad = now_ts - _weather_last_good["ts"]
+    if edad >= HEALTH_MAX_AGE_OK:
+        return "desactualizado", edad
+    actual = _weather_cache["data"] or {}
+    if lg.get("source_id") != "open-meteo" or actual.get("stale") is True or _breaker_abierto(now_ts):
+        return "degradado", edad
+    return "ok", edad
+
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Responde siempre 200 mientras el proceso esté vivo (el estado va en el cuerpo).
+    Sin parámetros NO consulta fuentes externas. Con ?warm=1 además refresca el clima
+    si la caché venció: sirve para el ping periódico que mantiene despierto el
+    servidor y deja datos listos en memoria."""
+    if request.args.get("warm") in ("1", "true", "yes"):
+        try:
+            obtener_clima()
+        except Exception:
+            pass
+
+    now_ts = time.time()
+    estado, edad = _estado_servicio(now_ts)
+    lg = _weather_last_good["data"]
+    cache_actual = _weather_cache["data"] or {}
+
+    return jsonify({
+        "status": estado,
+        "uptime_s": round(now_ts - _started_ts),
+        "server_time_utc": _iso_utc(now_ts),
+        "weather": {
+            "source_id": lg.get("source_id") if lg else None,
+            "age_s": round(edad) if edad is not None else None,
+            "serving_stale": bool(cache_actual.get("stale")),
+            "serving_degraded": bool(cache_actual.get("degraded")),
+        },
+        "open_meteo": {
+            "breaker_open": _breaker_abierto(now_ts),
+            "breaker_retry_in_s": max(0, round(_breaker["open_until"] - now_ts)) if _breaker_abierto(now_ts) else 0,
+            "breaker_reason": _breaker["motivo"] if _breaker_abierto(now_ts) else None,
+            **_stats_publicas("open-meteo"),
+        },
+        "metno": _stats_publicas("metno"),
+    })
+
+
+def _precalentar():
+    """Al arrancar (o despertar) el servidor, trae el clima en segundo plano para que
+    el primer usuario no encuentre la memoria vacía."""
+    try:
+        obtener_clima()
+    except Exception:
+        pass
+
+
+# En los tests se desactiva con CLIMA_NO_WARMUP=1 para no pegarle a la red al importar.
+if os.environ.get("CLIMA_NO_WARMUP") != "1":
+    threading.Thread(target=_precalentar, daemon=True).start()
 
 
 if __name__ == '__main__':

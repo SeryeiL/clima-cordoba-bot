@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Clima Córdoba Pro</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 15px; }
         .container { max-width: 600px; margin: 0 auto; }
@@ -55,12 +54,6 @@
 
         .notif-btn { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 0.75rem; cursor: pointer; margin-top: 5px; }
 
-        #radarMap { height: 280px; border-radius: 8px; overflow: hidden; border: 1px solid #334155; background: #0b0f19; }
-        .radar-controls { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; gap: 10px; }
-        .radar-btn { background: #0284c7; color: white; border: none; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; }
-        .radar-btn:disabled { opacity: 0.6; cursor: default; }
-        .radar-note { font-size: 0.78rem; color: #cbd5e1; margin: 8px 0 0 0; min-height: 1em; }
-        .radar-note.warn { color: #fcd34d; }
         .radar-attribution { font-size: 0.7rem; color: #64748b; margin-top: 6px; }
         .radar-attribution a { color: #38bdf8; text-decoration: none; }
 
@@ -100,29 +93,15 @@
             </div>
         </div>
 
-        <!-- Radar de Precipitación Real y Animado (RainViewer) -->
-        <div class="card">
-            <h3>Radar de Precipitación en Vivo</h3>
-            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Radar real de la última hora. Animalo para ver hacia dónde se mueve.</p>
-            <div id="radarMap"></div>
-            <div class="radar-controls">
-                <button id="radarPlayBtn" class="radar-btn">▶ Animar</button>
-                <span id="radarFrameTime" style="font-size: 0.75rem; color: #94a3b8; text-align: right;">Cargando...</span>
-            </div>
-            <p id="radarNote" class="radar-note"></p>
-            <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a> · Mapa © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></p>
-        </div>
-
         <!-- Radar oficial del OHMC (Observatorio Hidrometeorológico de Córdoba) -->
-        <!-- Lo sumamos como alternativa: RainViewer es un mosaico global y, para Argentina,
-             suele quedarse sin datos de la región por ratos largos (es un problema conocido
-             y recurrente del lado de RainViewer, no de esta página). El OHMC opera su propio
-             radar local y no depende de esa fuente. -->
+        <!-- Antes mostrábamos acá un radar propio hecho con mosaicos de RainViewer, pero
+             RainViewer suele quedarse sin datos de la región por ratos largos para Argentina
+             (es un problema conocido y recurrente del lado de RainViewer, no de esta página),
+             así que lo reemplazamos por el radar propio del OHMC, que no depende de esa fuente. -->
         <div class="card">
             <h3>Radar Oficial — OHMC (Córdoba)</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">
-                Radar propio del Observatorio Hidrometeorológico de Córdoba. Es una fuente distinta de la de arriba,
-                útil para comparar cuando RainViewer no tenga datos de la región.
+                Radar en vivo del Observatorio Hidrometeorológico de Córdoba.
             </p>
             <div class="ohmc-frame-wrap">
                 <iframe src="https://webmet.ohmc.ar/" title="Radar en vivo OHMC" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
@@ -131,12 +110,13 @@
             <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
-        <!-- Trayectoria y ETA estimadas (cálculo propio sobre el radar) -->
+        <!-- Trayectoria y ETA estimadas (cálculo propio sobre radar RainViewer, NO sobre el OHMC de arriba) -->
         <div class="card">
             <h3>Trayectoria Estimada</h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
-                Calculado comparando el radar de los últimos 40 min. Es una <strong>estimación</strong> (nowcasting lineal),
-                se degrada más allá de ~60 min. No es un dato oficial.
+                Calculado comparando radar internacional (RainViewer) de los últimos 40 min — es una fuente distinta
+                del radar OHMC de arriba. Es una <strong>estimación</strong> (nowcasting lineal), se degrada más allá
+                de ~60 min, y falla seguido para Argentina porque RainViewer no siempre tiene datos de la región.
             </p>
             <div id="trajectory-content">Calculando trayectoria...</div>
         </div>
@@ -215,12 +195,7 @@
     <!-- Script oficial de X para renderizar el widget de timeline -->
     <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
 
-    <!-- Leaflet para el mapa del radar -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-
     <script>
-        const CORDOBA_LAT = -31.4201;
-        const CORDOBA_LON = -64.1888;
         const BACKEND = "https://clima-cordoba-bot.onrender.com";
         const API_URL = BACKEND + "/api/live-weather";
         const TRAJECTORY_API_URL = BACKEND + "/api/storm-trajectory";
@@ -257,165 +232,6 @@
         }
 
         // =====================================================================
-        // Radar de precipitación (RainViewer, gratis, sin API key)
-        // =====================================================================
-        // Límites actuales del plan gratuito de RainViewer: zoom máx. 7 y pocos pedidos
-        // por minuto por IP. Por eso: al cargar solo se baja el fotograma más reciente,
-        // y la animación usa los últimos RADAR_ANIM_FRAMES (no los 13 de la lista).
-        const RADAR_ANIM_FRAMES = 6;
-        const RADAR_STALE_MIN = 30;   // si el fotograma más nuevo tiene más de esto, avisamos
-
-        let radarMap, radarLayers = [], radarFrames = [], radarHost = "", radarFrameIndex = 0;
-        let radarPlaying = false, radarAnimInterval = null, radarPreloading = false;
-        const radarState = { tileErrors: 0, sinLluvia: null };
-
-        function radarAnimStart() { return Math.max(0, radarFrames.length - RADAR_ANIM_FRAMES); }
-
-        function updateRadarNote() {
-            const el = document.getElementById('radarNote');
-            if (radarState.tileErrors > 0) {
-                el.className = 'radar-note warn';
-                el.innerText = "Algunos mosaicos del radar no cargaron (puede ser el límite de pedidos de RainViewer). Esperá un minuto y recargá.";
-            } else if (radarState.sinLluvia === true) {
-                el.className = 'radar-note';
-                el.innerText = "Sin precipitación detectada en el radar en el área de Córdoba (según el último análisis del servidor). Por eso el mapa se ve igual en cada fotograma.";
-            } else {
-                el.className = 'radar-note';
-                el.innerText = "";
-            }
-        }
-
-        function initRadarMap() {
-            radarMap = L.map('radarMap', { zoomControl: false, attributionControl: false })
-                .setView([CORDOBA_LAT, CORDOBA_LON], 7);
-
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 7,
-                attribution: '© OpenStreetMap'
-            }).addTo(radarMap);
-
-            L.marker([CORDOBA_LAT, CORDOBA_LON]).addTo(radarMap);
-
-            fetchRadarFrames();
-            setInterval(fetchRadarFrames, 10 * 60 * 1000); // RainViewer actualiza cada 10 min
-        }
-
-        function clearRadarLayers() {
-            radarLayers.forEach(l => { if (l) radarMap.removeLayer(l); });
-            radarLayers = [];
-        }
-
-        // Una capa por fotograma, creada solo cuando hace falta, y se alterna por opacidad
-        // (así la animación no parpadea ni deja el mapa en blanco entre cuadros).
-        function getRadarLayer(i) {
-            if (!radarLayers[i]) {
-                const url = radarHost + radarFrames[i].path + '/256/{z}/{x}/{y}/2/1_1.png';
-                const layer = L.tileLayer(url, { maxZoom: 7, maxNativeZoom: 7, opacity: 0, zIndex: 10 + i });
-                layer.on('load', () => { layer._radarReady = true; });
-                layer.on('tileerror', () => { radarState.tileErrors++; updateRadarNote(); });
-                layer.addTo(radarMap);
-                radarLayers[i] = layer;
-            }
-            return radarLayers[i];
-        }
-
-        function showRadarFrame(idx) {
-            const frame = radarFrames[idx];
-            if (!frame) return;
-            radarLayers.forEach(l => { if (l) l.setOpacity(0); });
-            getRadarLayer(idx).setOpacity(0.75);
-
-            const d = new Date(frame.time * 1000);
-            const horaArg = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Cordoba' });
-            const mins = Math.max(0, Math.round((Date.now() / 1000 - frame.time) / 60));
-            const esUltimo = idx === radarFrames.length - 1;
-            const el = document.getElementById('radarFrameTime');
-            if (esUltimo && mins > RADAR_STALE_MIN) {
-                el.innerText = `${horaArg} · ⚠ radar desactualizado (hace ${mins} min)`;
-                el.style.color = "#fcd34d";
-            } else {
-                el.innerText = `${horaArg} · hace ${mins} min` + (esUltimo ? " (último)" : "");
-                el.style.color = "#94a3b8";
-            }
-        }
-
-        async function fetchRadarFrames() {
-            try {
-                const data = await fetchJSON('https://api.rainviewer.com/public/weather-maps.json', 10000);
-                const frames = (data.radar && data.radar.past) || [];
-                if (frames.length === 0) {
-                    document.getElementById('radarFrameTime').innerText = "Sin datos de radar";
-                    return;
-                }
-                const nuevoUltimo = frames[frames.length - 1].time;
-                const hayCambio = radarFrames.length === 0 || nuevoUltimo !== radarFrames[radarFrames.length - 1].time;
-
-                radarHost = data.host;
-                if (hayCambio) {
-                    stopRadarAnim();
-                    clearRadarLayers();
-                    radarFrames = frames;
-                    radarState.tileErrors = 0;
-                    radarFrameIndex = radarFrames.length - 1; // frame más reciente
-                    updateRadarNote();
-                }
-                showRadarFrame(radarFrames.length - 1);
-            } catch (e) {
-                document.getElementById('radarFrameTime').innerText = "Radar no disponible";
-            }
-        }
-
-        function stopRadarAnim() {
-            radarPlaying = false;
-            clearInterval(radarAnimInterval);
-            radarAnimInterval = null;
-            const btn = document.getElementById('radarPlayBtn');
-            btn.innerText = "▶ Animar";
-            btn.disabled = false;
-            if (radarFrames.length) {
-                radarFrameIndex = radarFrames.length - 1;
-                showRadarFrame(radarFrameIndex);
-            }
-        }
-
-        // Antes de animar, baja los fotogramas de la animación (con tope de espera)
-        // para que no queden cuadros en blanco la primera vuelta.
-        async function preloadAnimFrames() {
-            const esperas = [];
-            for (let i = radarAnimStart(); i < radarFrames.length; i++) {
-                const layer = getRadarLayer(i);
-                if (layer._radarReady) continue;
-                esperas.push(new Promise(res => layer.once('load', res)));
-            }
-            if (esperas.length) await Promise.race([Promise.all(esperas), sleep(8000)]);
-        }
-
-        document.getElementById('radarPlayBtn').addEventListener('click', async () => {
-            if (radarPreloading || radarFrames.length < 2) return;
-            if (radarPlaying) { stopRadarAnim(); return; }
-
-            const btn = document.getElementById('radarPlayBtn');
-            radarPreloading = true;
-            btn.disabled = true;
-            btn.innerText = "Cargando…";
-            await preloadAnimFrames();
-            radarPreloading = false;
-            btn.disabled = false;
-
-            radarPlaying = true;
-            btn.innerText = "⏸ Pausar";
-            radarFrameIndex = radarAnimStart();
-            showRadarFrame(radarFrameIndex);
-            radarAnimInterval = setInterval(() => {
-                radarFrameIndex++;
-                if (radarFrameIndex >= radarFrames.length) radarFrameIndex = radarAnimStart();
-                showRadarFrame(radarFrameIndex);
-            }, 700);
-        });
-
-        initRadarMap();
-
-        // =====================================================================
         // Trayectoria estimada (backend, sobre el radar)
         // =====================================================================
         function esSinLluvia(t) {
@@ -432,14 +248,13 @@
             const box = document.getElementById('trajectory-content');
             try {
                 const t = await fetchJSON(TRAJECTORY_API_URL, 45000);
-                radarState.sinLluvia = esSinLluvia(t);
-                updateRadarNote();
+                const sinLluvia = esSinLluvia(t);
 
                 if (t.ok === false) {
-                    if (radarState.sinLluvia === true) {
-                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">Ahora mismo no hay precipitación en el radar en el área de Córdoba, así que no hay una tormenta para seguir.</p>`;
+                    if (sinLluvia === true) {
+                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">El radar internacional (RainViewer) no detecta precipitación en el área de Córdoba, así que no hay una tormenta para seguir.</p>`;
                     } else {
-                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}</p>`;
+                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}<br><small>RainViewer suele quedarse sin datos de Argentina por ratos largos — mirá el radar OHMC de arriba, que es independiente.</small></p>`;
                     }
                     return;
                 }
@@ -645,11 +460,8 @@
             if (document.visibilityState === 'visible') {
                 loadWeather();
                 fetchTrajectory();
-                fetchRadarFrames();
             }
         });
     </script>
-</body>
-</html>
 </body>
 </html>

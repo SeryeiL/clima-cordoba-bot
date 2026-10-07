@@ -63,6 +63,14 @@
         .radar-note.warn { color: #fcd34d; }
         .radar-attribution { font-size: 0.7rem; color: #64748b; margin-top: 6px; }
         .radar-attribution a { color: #38bdf8; text-decoration: none; }
+
+        /* Radar oficial del OHMC (Córdoba), como alternativa cuando RainViewer no tiene
+           datos de la región (le pasa seguido a Argentina). No pudimos previsualizar este
+           embed en nuestro entorno de pruebas, por eso el enlace directo queda siempre a mano. */
+        .ohmc-frame-wrap { position: relative; width: 100%; height: 480px; border-radius: 8px; overflow: hidden; background: #0b0f19; border: 1px solid #334155; }
+        .ohmc-frame-wrap iframe { width: 100%; height: 100%; border: none; }
+        .ohmc-fallback { font-size: 0.8rem; color: #94a3b8; text-align: center; padding: 8px 0 0 0; }
+        .ohmc-fallback a { color: #38bdf8; text-decoration: none; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -103,6 +111,24 @@
             </div>
             <p id="radarNote" class="radar-note"></p>
             <p class="radar-attribution">Weather data by <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a> · Mapa © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a></p>
+        </div>
+
+        <!-- Radar oficial del OHMC (Observatorio Hidrometeorológico de Córdoba) -->
+        <!-- Lo sumamos como alternativa: RainViewer es un mosaico global y, para Argentina,
+             suele quedarse sin datos de la región por ratos largos (es un problema conocido
+             y recurrente del lado de RainViewer, no de esta página). El OHMC opera su propio
+             radar local y no depende de esa fuente. -->
+        <div class="card">
+            <h3>Radar Oficial — OHMC (Córdoba)</h3>
+            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">
+                Radar propio del Observatorio Hidrometeorológico de Córdoba. Es una fuente distinta de la de arriba,
+                útil para comparar cuando RainViewer no tenga datos de la región.
+            </p>
+            <div class="ohmc-frame-wrap">
+                <iframe src="https://webmet.ohmc.ar/" title="Radar en vivo OHMC" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>
+            </div>
+            <p class="ohmc-fallback">¿No carga el radar? <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">Abrilo directo en una pestaña nueva</a></p>
+            <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
         <!-- Trayectoria y ETA estimadas (cálculo propio sobre el radar) -->

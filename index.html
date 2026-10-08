@@ -356,14 +356,24 @@
                 ? "Próximas horas · lluvia prevista (aprox. del respaldo: 70% si se espera precipitación, 0% si no)"
                 : "Próximas horas · % de probabilidad de lluvia";
 
-            // Banner de posible granizo: es lo que indica el MODELO, no una confirmación.
+            // Banner de posible granizo o tormenta en formación: es lo que indica
+            // el MODELO (actual o pronóstico), no una confirmación.
             const banner = document.getElementById('hailAlertBanner');
             if (data.hail_possible === true) {
                 banner.style.display = "block";
                 document.getElementById('hailAlertTitle').innerText = data.degraded === true
                     ? "El modelo de respaldo indica tormenta eléctrica"
                     : "El modelo indica posible tormenta con granizo";
+                document.getElementById('hailAlertText').innerText =
+                    "Es una estimación del modelo, no una confirmación. Mirá el radar y el parte oficial del SMN.";
                 document.getElementById('hail').style.color = "#ef4444";
+            } else if (data.storm_forming === true) {
+                banner.style.display = "block";
+                document.getElementById('hailAlertTitle').innerText = "Posible tormenta en formación";
+                document.getElementById('hailAlertText').innerText =
+                    (data.storm_forming_detail || "El pronóstico indica alta probabilidad de precipitación en las próximas horas.")
+                    + " Mirá el radar OHMC y el parte oficial del SMN.";
+                document.getElementById('hail').style.color = "#eab308";
             } else {
                 banner.style.display = "none";
                 document.getElementById('hail').style.color = "#38bdf8";

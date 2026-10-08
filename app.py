@@ -84,6 +84,35 @@ WEATHER_CODE_MAP = {
 
 HAIL_CODES = {96, 99}
 
+# Umbral y cantidad mínima de horas consecutivas con alta probabilidad de
+# precipitación para considerar que "se está formando algo", aunque todavía
+# no haya lluvia/CAPE/granizo en el instante actual.
+FORMACION_PROB_UMBRAL = 60
+FORMACION_HORAS_MIN = 2
+
+
+def evaluar_formacion_tormenta(forecast_timeline):
+    """
+    Mira el PRONÓSTICO de probabilidad de precipitación de las próximas horas
+    (dato real, no el radar) para detectar que algo se está formando, incluso
+    cuando las condiciones actuales todavía no lo muestran (sin lluvia ni CAPE
+    alto en este instante, o en modo reducido sin CAPE disponible).
+
+    Esto es intencionalmente independiente del índice de granizo: el índice de
+    granizo mira el AHORA, esto mira las próximas horas. Sirve para no
+    depender únicamente del radar (RainViewer) para avisar de una tormenta que
+    recién está empezando.
+    """
+    probs = [p.get("precip_probability") for p in (forecast_timeline or [])]
+    probs = [p for p in probs if isinstance(p, (int, float))]
+    altas = [p for p in probs if p >= FORMACION_PROB_UMBRAL]
+    if len(altas) >= FORMACION_HORAS_MIN:
+        return True, (
+            f"El pronóstico indica {max(altas):.0f}% de probabilidad de precipitación "
+            f"sostenida en las próximas horas, aunque el dato instantáneo todavía no lo muestre."
+        )
+    return False, None
+
 
 def calcular_indice_granizo(cape, freezing_level_m, weather_code, wind_gusts_kmh):
     """
@@ -276,11 +305,6 @@ def _fetch_metno():
     hail_possible = _metno_tiene_tormenta(symbol_code)
     indice_granizo = calcular_indice_granizo_reducido(symbol_code, wind_gust_kmh)
 
-    if indice_granizo["nivel"] in ("Alto", "Moderado"):
-        alert_level = "amarilla"
-    else:
-        alert_level = "ninguna"
-
     forecast_timeline = []
     for entry in series[1:5]:
         t = entry["time"]  # ISO UTC, ej "2026-10-06T12:00:00Z"
@@ -301,6 +325,15 @@ def _fetch_metno():
             "precip_probability": prob_aprox,
         })
 
+    storm_forming, storm_forming_detail = evaluar_formacion_tormenta(forecast_timeline)
+
+    if indice_granizo["nivel"] in ("Alto", "Moderado"):
+        alert_level = "amarilla"
+    elif storm_forming:
+        alert_level = "amarilla"
+    else:
+        alert_level = "ninguna"
+
     return {
         "source": "MET Norway (respaldo: Open-Meteo no disponible en este momento; sin CAPE ni nivel de congelamiento)",
         "source_id": "metno",
@@ -318,6 +351,8 @@ def _fetch_metno():
         "hail_index": indice_granizo,
         "alert_level": alert_level,
         "hail_possible": hail_possible,
+        "storm_forming": storm_forming,
+        "storm_forming_detail": storm_forming_detail,
         "forecast_timeline": forecast_timeline,
         "degraded": True,
         "degraded_reason": "Open-Meteo no respondió; usando MET Norway como respaldo (sin CAPE ni nivel de congelamiento, el índice de granizo es menos preciso ahora).",
@@ -646,14 +681,6 @@ def _armar_datos_open_meteo(meteo, now, current_time_str):
 
     indice_granizo = calcular_indice_granizo(cape_now, freezing_now, code, wind_gusts)
 
-    # Heurística de severidad general (combina el índice de granizo con lluvia/viento)
-    if indice_granizo["nivel"] == "Alto":
-        alert_level = "naranja"
-    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 60 or precipitation >= 10:
-        alert_level = "amarilla"
-    else:
-        alert_level = "ninguna"
-
     # Timeline real: próximas horas con probabilidad de precipitación (dato real)
     forecast_timeline = []
     for h in range(start_idx, min(start_idx + 4, len(hourly_times))):
@@ -662,6 +689,21 @@ def _armar_datos_open_meteo(meteo, now, current_time_str):
             "hour": hour_label,
             "precip_probability": hourly_probs[h] if h < len(hourly_probs) else None
         })
+
+    storm_forming, storm_forming_detail = evaluar_formacion_tormenta(forecast_timeline)
+
+    # Heurística de severidad general (combina el índice de granizo, lluvia/viento
+    # ACTUALES, y el pronóstico de las próximas horas para no depender solo del
+    # instante presente: una tormenta puede estar "en formación" antes de que el
+    # dato instantáneo lo muestre).
+    if indice_granizo["nivel"] == "Alto":
+        alert_level = "naranja"
+    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 60 or precipitation >= 10:
+        alert_level = "amarilla"
+    elif storm_forming:
+        alert_level = "amarilla"
+    else:
+        alert_level = "ninguna"
 
     return {
         "source": "Open-Meteo (datos reales, modelo meteorológico, no es un parte oficial del SMN)",
@@ -680,6 +722,8 @@ def _armar_datos_open_meteo(meteo, now, current_time_str):
         "hail_index": indice_granizo,
         "alert_level": alert_level,
         "hail_possible": hail_possible,
+        "storm_forming": storm_forming,
+        "storm_forming_detail": storm_forming_detail,
         "forecast_timeline": forecast_timeline,
         "degraded": False,
         "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",

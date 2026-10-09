@@ -110,17 +110,6 @@
             <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
-        <!-- Trayectoria y ETA estimadas (cálculo propio sobre radar RainViewer, NO sobre el OHMC de arriba) -->
-        <div class="card">
-            <h3>Trayectoria Estimada</h3>
-            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
-                Calculado comparando radar internacional (RainViewer) de los últimos 40 min — es una fuente distinta
-                del radar OHMC de arriba. Es una <strong>estimación</strong> (nowcasting lineal), se degrada más allá
-                de ~60 min, y falla seguido para Argentina porque RainViewer no siempre tiene datos de la región.
-            </p>
-            <div id="trajectory-content">Calculando trayectoria...</div>
-        </div>
-
         <!-- Condiciones en Vivo -->
         <div class="card">
             <h3>Condiciones en Vivo — Córdoba Capital</h3>
@@ -198,7 +187,6 @@
     <script>
         const BACKEND = "https://clima-cordoba-bot.onrender.com";
         const API_URL = BACKEND + "/api/live-weather";
-        const TRAJECTORY_API_URL = BACKEND + "/api/storm-trajectory";
 
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const fmt = (v, suf) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : (v + (suf || ""));

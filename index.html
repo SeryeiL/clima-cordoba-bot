@@ -110,6 +110,19 @@
             <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
+        <!-- Trayectoria y ETA estimadas — calculado sobre el radar real RMA1 (vía OHMC),
+             no sobre RainViewer (esa versión anterior se sacó porque casi nunca tenía señal
+             útil para Argentina). Es una estimación propia (nowcasting lineal simple). -->
+        <div class="card">
+            <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Radar real (RMA1)</span></h3>
+            <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
+                Calculado comparando los últimos ~35 min del radar real de Córdoba (RMA1, vía OHMC) —
+                es una <strong>estimación propia</strong> (nowcasting lineal), se degrada más allá de ~60 min,
+                y los puntos de zona/ETA son aproximados, no límites barriales oficiales.
+            </p>
+            <div id="trajectory-content">Calculando trayectoria...</div>
+        </div>
+
         <!-- Condiciones en Vivo -->
         <div class="card">
             <h3>Condiciones en Vivo — Córdoba Capital</h3>
@@ -187,6 +200,7 @@
     <script>
         const BACKEND = "https://clima-cordoba-bot.onrender.com";
         const API_URL = BACKEND + "/api/live-weather";
+        const TRAJECTORY_API_URL = BACKEND + "/api/storm-trajectory";
 
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const fmt = (v, suf) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : (v + (suf || ""));
@@ -220,57 +234,52 @@
         }
 
         // =====================================================================
-        // Trayectoria estimada (backend, sobre el radar)
+        // Trayectoria estimada (backend, sobre el radar real RMA1 vía OHMC)
         // =====================================================================
-        function esSinLluvia(t) {
-            // "Sin lluvia" solo si la descarga del radar fue confiable (casi todos los mosaicos bien).
-            if (t.ok === true) return false;
-            const d = t.diagnostico;
-            if (!d || d.frames_con_senal_de_lluvia !== 0) return false;
-            const m = /^(\d+)\/(\d+)$/.exec(d.tiles_descargados_ok || "");
-            if (!m) return null;
-            return (Number(m[1]) / Number(m[2])) >= 0.8 ? true : null;
-        }
-
         async function fetchTrajectory() {
             const box = document.getElementById('trajectory-content');
             try {
                 const t = await fetchJSON(TRAJECTORY_API_URL, 45000);
-                const sinLluvia = esSinLluvia(t);
 
                 if (t.ok === false) {
-                    if (sinLluvia === true) {
-                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">El radar internacional (RainViewer) no detecta precipitación en el área de Córdoba, así que no hay una tormenta para seguir.</p>`;
-                    } else {
-                        box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}<br><small>RainViewer suele quedarse sin datos de Argentina por ratos largos — mirá el radar OHMC de arriba, que es independiente.</small></p>`;
-                    }
+                    box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}</p>`;
                     return;
                 }
 
-                let etaHtml = "";
-                if (t.eta && t.eta.eta_minutos !== null && t.eta.eta_minutos !== undefined) {
-                    etaHtml = `<strong style="color:#38bdf8; font-size:1.1rem;">~${t.eta.eta_minutos} min</strong>`;
-                } else {
-                    etaHtml = `<span style="color:#94a3b8; font-size:0.85rem;">${(t.eta && t.eta.nota) || "No calculable ahora"}</span>`;
-                }
+                let filasZonas = "";
+                (t.etas_por_zona || []).forEach(z => {
+                    const etaTxt = (z.eta_minutos === null || z.eta_minutos === undefined)
+                        ? `<span style="color:#94a3b8;">--</span>`
+                        : `<strong style="color:#38bdf8;">~${z.eta_minutos} min</strong>`;
+                    filasZonas += `
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid #334155;">
+                            <span style="font-size:0.82rem;">${z.zona}</span>
+                            <span style="font-size:0.75rem; color:#94a3b8; margin-right:8px;">${z.distancia_km} km</span>
+                            ${etaTxt}
+                        </div>`;
+                });
+
+                const notaEstacionaria = t.nota_estacionaria
+                    ? `<p style="color:#eab308; font-size:0.78rem; margin-top:8px;">${t.nota_estacionaria}</p>` : "";
 
                 box.innerHTML = `
                     <div class="grid">
                         <div class="metric"><span>ZONA ACTUAL APROX.</span><strong>${t.zona_actual_aproximada}</strong></div>
                         <div class="metric"><span>RUMBO</span><strong>${t.rumbo_compass} (${t.rumbo_grados}°)</strong></div>
-                        <div class="metric"><span>VELOCIDAD</span><strong>${t.velocidad_estim_kmh} km/h</strong></div>
-                        <div class="metric"><span>DIST. A CAPITAL</span><strong>${t.distancia_a_capital_km} km</strong></div>
+                        <div class="metric" style="grid-column: span 2;"><span>VELOCIDAD ESTIMADA</span><strong>${t.velocidad_estim_kmh} km/h</strong></div>
                     </div>
-                    <div style="margin-top:10px; text-align:center;">
-                        <span style="font-size:0.75rem; color:#94a3b8;">ETA estimado a Capital: </span>${etaHtml}
-                    </div>`;
+                    <div style="margin-top:12px;">
+                        <span style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">ETA estimado por zona de Capital</span>
+                        ${filasZonas}
+                    </div>
+                    ${notaEstacionaria}`;
             } catch (e) {
                 box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">No se pudo conectar para calcular la trayectoria.</p>`;
             }
         }
 
         fetchTrajectory();
-        setInterval(fetchTrajectory, 5 * 60 * 1000); // cada 5 min, el radar solo cambia cada 10
+        setInterval(fetchTrajectory, 5 * 60 * 1000); // cada 5 min, el radar solo cambia cada ~9-10
 
         function requestNotificationPermission() {
             if ("Notification" in window) {

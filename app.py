@@ -1,10 +1,13 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+import math
 import os
 import threading
 import time
 import requests
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
@@ -23,9 +26,11 @@ LON = -64.1888
 # ============================================================
 _weather_cache = {"data": None, "ts": 0, "ok": None}
 _weather_last_good = {"data": None, "ts": 0}  # último pronóstico que SÍ funcionó
+_trajectory_cache = {"data": None, "ts": 0}
 CACHE_TTL_WEATHER_OK = 180     # 3 min: si el último pedido salió bien, no reconsultamos antes de esto
 CACHE_TTL_WEATHER_ERROR = 20   # 20 s: si falló (ej. 429), reintentamos pronto en vez de quedarnos
                                # pegados al error por 3 min enteros
+CACHE_TTL_TRAJECTORY = 300     # 5 min (el radar de OHMC se actualiza cada ~9-10 min)
 
 # Evita que varios pedidos simultáneos (ej. el servidor recién despertó y
 # llegan 5 clientes juntos) disparen cada uno su propio pedido a las fuentes.
@@ -351,6 +356,246 @@ def _fetch_metno():
         "degraded": True,
         "degraded_reason": "Open-Meteo no respondió; usando MET Norway como respaldo (sin CAPE ni nivel de congelamiento, el índice de granizo es menos preciso ahora).",
     }
+
+
+# ============================================================
+# TRAYECTORIA Y ETA DE TORMENTA — radar real RMA1 (OHMC/SINARAME)
+# ============================================================
+# A diferencia del intento anterior con RainViewer (que casi nunca tenía
+# señal útil sobre Argentina), esto usa el endpoint interno que usa el
+# propio visor web de OHMC (webmet.ohmc.ar) para traer el producto COLMAX
+# (máximo de reflectividad en columna) del radar nacional RMA1 — el mismo
+# radar que usa el SMN para Córdoba.
+#
+# OJO: es un endpoint NO documentado del visor de OHMC, no una API pública
+# pensada para terceros. Filtra por header Origin/Referer (no por API key),
+# así que lo imitamos para poder consultarlo. Puede cambiar o bloquearse
+# sin aviso — a diferencia de RainViewer/MET Norway, acá no hay garantía
+# de estabilidad. Se decidió asumir ese riesgo porque, a cambio, es el
+# radar real: hoy mismo detectó lluvia donde RainViewer no veía nada.
+#
+# Método: por cada frame (imagen RGBA georreferenciada por un bbox en
+# grados), calculamos el centroide ponderado por el canal alfa (igual que
+# con RainViewer). Comparando el centroide entre frames sacamos velocidad
+# y rumbo, y extrapolamos un ETA — pero esta vez a VARIOS destinos dentro
+# de Córdoba Capital (Centro, Norte, Sur, Este, Oeste), no solo a un punto.
+# Sigue siendo una ESTIMACIÓN propia (nowcasting lineal simple), no un
+# dato oficial, y se degrada rápido más allá de ~60 min.
+
+OHMC_API_BASE = "https://webmet.ohmc.ar/api/v1"
+OHMC_HEADERS = {
+    "Origin": "https://webmet.ohmc.ar",
+    "Referer": "https://webmet.ohmc.ar/",
+    "User-Agent": "Mozilla/5.0 (compatible; ClimaCordobaPro/1.0; +https://github.com/seryeil/clima-cordoba-bot)",
+}
+OHMC_RADAR_CODE = "RMA1"
+OHMC_PRODUCT_KEY = "COLMAX"
+OHMC_STRATEGY = "0315"
+OHMC_VOL_NR = ["01", "02"]
+OHMC_FRAMES_A_USAR = 4  # últimos 4 frames (~35-40 min, cada uno cada ~9-10 min)
+
+# Zonas de origen de referencia (para decir "la tormenta está cerca de X").
+# Son aproximaciones de centro de localidad/región, no límites oficiales.
+ZONAS_REFERENCIA = [
+    ("Traslasierra", -31.72, -65.00),
+    ("Punilla (Carlos Paz / La Falda)", -31.33, -64.47),
+    ("Sierras Chicas", -31.28, -64.33),
+    ("Alta Gracia", -31.6539, -64.4282),
+    ("Calamuchita", -32.05, -64.50),
+    ("Córdoba Capital", LAT, LON),
+]
+
+# Destinos dentro de Córdoba Capital para el ETA por zona. Son puntos de
+# referencia aproximados de cada cuadrante de la ciudad, no un límite
+# barrial oficial — alcanza para dar una idea de "por dónde entra primero".
+DESTINOS_CAPITAL = [
+    ("Centro", LAT, LON),
+    ("Zona Norte (Cerro de las Rosas / Villa Belgrano)", -31.3765, -64.2356),
+    ("Zona Sur (Villa El Libertador / Juniors)", -31.4762, -64.1739),
+    ("Zona Oeste (Argüello)", -31.3886, -64.2653),
+    ("Zona Este (Barrio Jardín / Gral. Paz)", -31.4075, -64.1578),
+]
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _bearing_deg(lat1, lon1, lat2, lon2):
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dlambda = math.radians(lon2 - lon1)
+    x = math.sin(dlambda) * math.cos(phi2)
+    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlambda)
+    return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+
+RUMBOS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+          "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
+
+
+def _bearing_a_rumbo(brng):
+    ix = round(brng / 22.5) % 16
+    return RUMBOS[ix]
+
+
+def _zona_mas_cercana(lat, lon):
+    return min(ZONAS_REFERENCIA, key=lambda z: _haversine_km(lat, lon, z[1], z[2]))[0]
+
+
+def _ohmc_listar_frames():
+    """Trae los últimos frames disponibles del producto COLMAX de RMA1,
+    ordenados del más viejo al más nuevo."""
+    params = {
+        "radar_code": OHMC_RADAR_CODE,
+        "product_key": OHMC_PRODUCT_KEY,
+        "vol_nr": OHMC_VOL_NR,
+        "strategy": OHMC_STRATEGY,
+    }
+    resp = requests.get(f"{OHMC_API_BASE}/cogs", params=params, headers=OHMC_HEADERS, timeout=8)
+    resp.raise_for_status()
+    cogs = resp.json().get("cogs", [])
+    return sorted(cogs, key=lambda c: c["observation_time"])
+
+
+def _ohmc_descargar_imagen(frame_id):
+    url = f"{OHMC_API_BASE}/frames/{frame_id}/image.png"
+    resp = requests.get(url, params={"colormap": "OHMC_dBZ"}, headers=OHMC_HEADERS, timeout=10)
+    resp.raise_for_status()
+    return Image.open(BytesIO(resp.content)).convert("RGBA")
+
+
+def _ohmc_centroide_precipitacion(img):
+    """Centroide ponderado por el canal alfa. El fondo (sin eco de radar)
+    viene con alpha=0; donde hay reflectividad, alpha=255."""
+    pixels = img.load()
+    w, h = img.size
+    total_peso = 0.0
+    sum_x = 0.0
+    sum_y = 0.0
+    for y in range(h):
+        for x in range(w):
+            a = pixels[x, y][3]
+            if a > 10:
+                total_peso += a
+                sum_x += x * a
+                sum_y += y * a
+    if total_peso == 0:
+        return None
+    return (sum_x / total_peso, sum_y / total_peso, total_peso)
+
+
+def _ohmc_pixel_a_latlon(px, py, w, h, bbox):
+    """La imagen de OHMC es una proyección lineal simple sobre su bbox
+    (no es un tile Web Mercator como RainViewer), así que alcanza con
+    interpolar linealmente dentro de esos límites."""
+    lon = bbox["min_lon"] + (px / w) * (bbox["max_lon"] - bbox["min_lon"])
+    lat = bbox["max_lat"] - (py / h) * (bbox["max_lat"] - bbox["min_lat"])
+    return lat, lon
+
+
+def analizar_trayectoria_tormenta():
+    try:
+        frames = _ohmc_listar_frames()
+        if len(frames) < 2:
+            return {"ok": False, "error": "No hay suficientes frames de radar todavía (OHMC)."}
+
+        frames_a_usar = frames[-OHMC_FRAMES_A_USAR:] if len(frames) >= OHMC_FRAMES_A_USAR else frames
+
+        puntos = []
+        descargas_ok = 0
+        for f in frames_a_usar:
+            try:
+                img = _ohmc_descargar_imagen(f["id"])
+                descargas_ok += 1
+            except Exception:
+                continue
+            centroide = _ohmc_centroide_precipitacion(img)
+            if centroide is None:
+                continue
+            px, py, peso = centroide
+            w, h = img.size
+            lat, lon = _ohmc_pixel_a_latlon(px, py, w, h, f["bbox"])
+            t = datetime.strptime(f["observation_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            puntos.append({"time": t.timestamp(), "lat": lat, "lon": lon, "peso": peso})
+
+        diagnostico = {
+            "frames_evaluados": len(frames_a_usar),
+            "frames_descargados_ok": descargas_ok,
+            "frames_con_senal_de_lluvia": len(puntos),
+        }
+
+        if len(puntos) < 2:
+            if descargas_ok == 0:
+                motivo = "No se pudo descargar ningún frame del radar de OHMC (posible problema de red o el endpoint cambió)."
+            elif descargas_ok < len(frames_a_usar):
+                motivo = "Se descargaron algunos frames pero no todos; puede ser un problema transitorio de red con OHMC."
+            else:
+                motivo = "Las descargas funcionaron bien; simplemente no hay precipitación detectable en el radar de Córdoba ahora mismo."
+            return {
+                "ok": False,
+                "error": "No se detectó suficiente precipitación en el radar (RMA1/OHMC) para calcular trayectoria.",
+                "motivo_probable": motivo,
+                "diagnostico": diagnostico,
+            }
+
+        primero, ultimo = puntos[0], puntos[-1]
+        dt_min = (ultimo["time"] - primero["time"]) / 60.0
+        if dt_min <= 0:
+            return {"ok": False, "error": "Datos de tiempo inconsistentes del radar."}
+
+        dist_recorrida_km = _haversine_km(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
+        velocidad_kmh = (dist_recorrida_km / dt_min) * 60
+        rumbo = _bearing_deg(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
+
+        etas_por_zona = []
+        for nombre, lat_dest, lon_dest in DESTINOS_CAPITAL:
+            dist_km = _haversine_km(ultimo["lat"], ultimo["lon"], lat_dest, lon_dest)
+            if velocidad_kmh < 2:
+                eta_min = None
+            else:
+                eta_min = round((dist_km / velocidad_kmh) * 60)
+            etas_por_zona.append({
+                "zona": nombre,
+                "distancia_km": round(dist_km, 1),
+                "eta_minutos": eta_min,
+            })
+
+        nota_estacionaria = None
+        if velocidad_kmh < 2:
+            nota_estacionaria = "El sistema se mueve muy poco o está estacionario; no se puede estimar una hora de llegada confiable."
+
+        return {
+            "ok": True,
+            "zona_actual_aproximada": _zona_mas_cercana(ultimo["lat"], ultimo["lon"]),
+            "rumbo_grados": round(rumbo),
+            "rumbo_compass": _bearing_a_rumbo(rumbo),
+            "velocidad_estim_kmh": round(velocidad_kmh, 1),
+            "etas_por_zona": etas_por_zona,
+            "nota_estacionaria": nota_estacionaria,
+            "frames_usados": len(puntos),
+            "fuente": "Radar RMA1 (SINARAME), vía OHMC — producto COLMAX (máximo de reflectividad en columna)",
+            "metodo": "Centroide ponderado de reflectividad (dBZ) sobre imagen georreferenciada, comparado entre frames (nowcasting lineal). Estimación propia, no oficial.",
+            "diagnostico": diagnostico,
+        }
+    except Exception as e:
+        return {"ok": False, "error": f"No se pudo calcular la trayectoria: {str(e)}"}
+
+
+@app.route('/api/storm-trajectory', methods=['GET'])
+def storm_trajectory():
+    now = time.time()
+    if _trajectory_cache["data"] is not None and (now - _trajectory_cache["ts"]) < CACHE_TTL_TRAJECTORY:
+        return jsonify(_trajectory_cache["data"])
+
+    resultado = analizar_trayectoria_tormenta()
+    _trajectory_cache["data"] = resultado
+    _trajectory_cache["ts"] = now
+    return jsonify(resultado)
 
 
 @app.route('/')

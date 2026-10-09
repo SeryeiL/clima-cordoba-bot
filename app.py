@@ -1,14 +1,10 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from datetime import datetime, timedelta, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from io import BytesIO
-import math
 import os
 import threading
 import time
 import requests
-from PIL import Image
 
 app = Flask(__name__)
 CORS(app)
@@ -27,11 +23,9 @@ LON = -64.1888
 # ============================================================
 _weather_cache = {"data": None, "ts": 0, "ok": None}
 _weather_last_good = {"data": None, "ts": 0}  # último pronóstico que SÍ funcionó
-_trajectory_cache = {"data": None, "ts": 0}
 CACHE_TTL_WEATHER_OK = 180     # 3 min: si el último pedido salió bien, no reconsultamos antes de esto
 CACHE_TTL_WEATHER_ERROR = 20   # 20 s: si falló (ej. 429), reintentamos pronto en vez de quedarnos
                                # pegados al error por 3 min enteros
-CACHE_TTL_TRAJECTORY = 300    # 5 min (coincide con el refresco del frontend)
 
 # Evita que varios pedidos simultáneos (ej. el servidor recién despertó y
 # llegan 5 clientes juntos) disparen cada uno su propio pedido a las fuentes.
@@ -357,230 +351,6 @@ def _fetch_metno():
         "degraded": True,
         "degraded_reason": "Open-Meteo no respondió; usando MET Norway como respaldo (sin CAPE ni nivel de congelamiento, el índice de granizo es menos preciso ahora).",
     }
-
-
-# ============================================================
-# TRAYECTORIA Y ETA DE TORMENTA (radar real, cálculo propio)
-# ============================================================
-# Idea: bajamos una grilla de 3x3 tiles del radar de RainViewer alrededor de
-# Córdoba (cobertura real ~800km, probada para que Traslasierra y Sierras
-# Chicas entren con margen), para los últimos frames disponibles (cada 10
-# min). En cada frame calculamos el "centroide" de precipitación (el punto
-# ponderado por intensidad de color/opacidad del radar). Comparando el
-# centroide entre frames sacamos velocidad y rumbo, y extrapolamos un ETA.
-#
-# Esto es una ESTIMACIÓN propia (nowcasting lineal simple), no un dato
-# oficial. Se degrada rápido más allá de ~60 min porque las tormentas
-# cambian de velocidad/dirección.
-
-RAINVIEWER_INDEX_URL = "https://api.rainviewer.com/public/weather-maps.json"
-RADAR_ZOOM = 7
-TILE_SIZE = 256
-FRAMES_A_USAR = 4  # últimos 4 frames = últimos 40 minutos
-
-ZONAS_REFERENCIA = [
-    ("Traslasierra", -31.72, -65.00),
-    ("Sierras Chicas", -31.28, -64.33),
-    ("Córdoba Capital", LAT, LON),
-]
-
-RUMBOS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-          "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
-
-
-def _deg2num_frac(lat_deg, lon_deg, zoom):
-    lat_rad = math.radians(lat_deg)
-    n = 2.0 ** zoom
-    x = (lon_deg + 180.0) / 360.0 * n
-    y = (1.0 - math.asinh(math.tan(lat_rad)) / math.pi) / 2.0 * n
-    return x, y
-
-
-def _deg2tile(lat_deg, lon_deg, zoom):
-    x, y = _deg2num_frac(lat_deg, lon_deg, zoom)
-    return int(x), int(y)
-
-
-def _tile_pixel_to_latlon(xtile_base, ytile_base, zoom, px, py, tile_size=TILE_SIZE):
-    n = 2.0 ** zoom
-    x = xtile_base + px / tile_size
-    y = ytile_base + py / tile_size
-    lon_deg = x / n * 360.0 - 180.0
-    lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
-    lat_deg = math.degrees(lat_rad)
-    return lat_deg, lon_deg
-
-
-def _haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
-
-
-def _bearing_deg(lat1, lon1, lat2, lon2):
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dlambda = math.radians(lon2 - lon1)
-    x = math.sin(dlambda) * math.cos(phi2)
-    y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlambda)
-    return (math.degrees(math.atan2(x, y)) + 360) % 360
-
-
-def _bearing_a_rumbo(brng):
-    ix = round(brng / 22.5) % 16
-    return RUMBOS[ix]
-
-
-def _zona_mas_cercana(lat, lon):
-    return min(ZONAS_REFERENCIA, key=lambda z: _haversine_km(lat, lon, z[1], z[2]))[0]
-
-
-def _descargar_tile(url):
-    r = requests.get(url, timeout=8)
-    r.raise_for_status()
-    return Image.open(BytesIO(r.content)).convert("RGBA")
-
-
-def _descargar_frame_compuesto(host, frame_path, xtile_base, ytile_base):
-    """Baja la grilla de 3x3 tiles de un frame y las pega en una sola imagen.
-    Devuelve (imagen_compuesta, tiles_descargados_ok) para poder diagnosticar
-    si un resultado vacío es por falta de lluvia o porque las descargas
-    están fallando."""
-    composite = Image.new("RGBA", (TILE_SIZE * 3, TILE_SIZE * 3), (0, 0, 0, 0))
-    tareas = {}
-    tiles_ok = 0
-    with ThreadPoolExecutor(max_workers=9) as pool:
-        for dy in range(3):
-            for dx in range(3):
-                xt = xtile_base + dx
-                yt = ytile_base + dy
-                url = f"{host}{frame_path}/{TILE_SIZE}/{RADAR_ZOOM}/{xt}/{yt}/2/1_1.png"
-                tareas[pool.submit(_descargar_tile, url)] = (dx, dy)
-        for future in as_completed(tareas):
-            dx, dy = tareas[future]
-            try:
-                tile_img = future.result()
-                composite.paste(tile_img, (dx * TILE_SIZE, dy * TILE_SIZE))
-                tiles_ok += 1
-            except Exception:
-                pass  # si falta un tile, seguimos con lo que tengamos
-    return composite, tiles_ok
-
-
-def _centroide_precipitacion(img):
-    """Centroide ponderado por el canal alfa (opacidad = proxy de intensidad del radar)."""
-    pixels = img.load()
-    w, h = img.size
-    total_peso = 0.0
-    sum_x = 0.0
-    sum_y = 0.0
-    for y in range(h):
-        for x in range(w):
-            a = pixels[x, y][3]
-            if a > 10:  # ignorar casi-transparente (ruido)
-                total_peso += a
-                sum_x += x * a
-                sum_y += y * a
-    if total_peso == 0:
-        return None
-    return (sum_x / total_peso, sum_y / total_peso, total_peso)
-
-
-def analizar_trayectoria_tormenta():
-    try:
-        idx_resp = requests.get(RAINVIEWER_INDEX_URL, timeout=8)
-        idx_resp.raise_for_status()
-        idx = idx_resp.json()
-        host = idx["host"]
-        frames = idx.get("radar", {}).get("past", [])
-        if len(frames) < 2:
-            return {"ok": False, "error": "No hay suficientes frames de radar todavía."}
-
-        frames_a_usar = frames[-FRAMES_A_USAR:] if len(frames) >= FRAMES_A_USAR else frames
-
-        xt0, yt0 = _deg2tile(LAT, LON, RADAR_ZOOM)
-        xtile_base, ytile_base = xt0 - 1, yt0 - 1  # esquina de la grilla 3x3
-
-        # Diagnóstico: para poder distinguir "no está lloviendo" de "algo se
-        # rompió" cuando no se puede calcular trayectoria.
-        tiles_ok_total = 0
-        tiles_esperados_total = len(frames_a_usar) * 9
-
-        puntos = []
-        for f in frames_a_usar:
-            composite, tiles_ok = _descargar_frame_compuesto(host, f["path"], xtile_base, ytile_base)
-            tiles_ok_total += tiles_ok
-            centroide = _centroide_precipitacion(composite)
-            if centroide is None:
-                continue
-            px, py, peso = centroide
-            lat, lon = _tile_pixel_to_latlon(xtile_base, ytile_base, RADAR_ZOOM, px, py)
-            puntos.append({"time": f["time"], "lat": lat, "lon": lon, "peso": peso})
-
-        diagnostico = {
-            "frames_en_indice_rainviewer": len(frames),
-            "frames_evaluados": len(frames_a_usar),
-            "frames_con_senal_de_lluvia": len(puntos),
-            "tiles_descargados_ok": f"{tiles_ok_total}/{tiles_esperados_total}",
-        }
-
-        if len(puntos) < 2:
-            if tiles_ok_total == 0:
-                motivo = "No se pudo descargar ningún tile del radar (posible problema de red o de la URL del host de RainViewer, no falta de lluvia)."
-            elif tiles_ok_total < tiles_esperados_total:
-                motivo = "Se descargaron algunos tiles pero no todos; puede haber afectado la detección. Puede ser un problema transitorio de red."
-            else:
-                motivo = "Las descargas funcionaron bien (todos los tiles OK); simplemente no hay precipitación detectable en el radar en esta zona ahora mismo."
-            return {
-                "ok": False,
-                "error": "No se detectó suficiente precipitación en el radar en la zona para calcular trayectoria.",
-                "motivo_probable": motivo,
-                "diagnostico": diagnostico,
-            }
-
-        primero, ultimo = puntos[0], puntos[-1]
-        dt_min = (ultimo["time"] - primero["time"]) / 60.0
-        if dt_min <= 0:
-            return {"ok": False, "error": "Datos de tiempo inconsistentes del radar."}
-
-        dist_recorrida_km = _haversine_km(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
-        velocidad_kmh = (dist_recorrida_km / dt_min) * 60
-        rumbo = _bearing_deg(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
-        dist_a_capital_km = _haversine_km(ultimo["lat"], ultimo["lon"], LAT, LON)
-
-        if velocidad_kmh < 2:
-            eta = {"eta_minutos": None, "nota": "El sistema se mueve muy poco o está estacionario; no se puede estimar una hora de llegada confiable."}
-        else:
-            eta = {"eta_minutos": round((dist_a_capital_km / velocidad_kmh) * 60), "nota": None}
-
-        return {
-            "ok": True,
-            "zona_actual_aproximada": _zona_mas_cercana(ultimo["lat"], ultimo["lon"]),
-            "distancia_a_capital_km": round(dist_a_capital_km, 1),
-            "velocidad_estim_kmh": round(velocidad_kmh, 1),
-            "rumbo_grados": round(rumbo),
-            "rumbo_compass": _bearing_a_rumbo(rumbo),
-            "eta": eta,
-            "frames_usados": len(puntos),
-            "metodo": "Centroide ponderado de reflectividad en radar RainViewer, comparado entre frames (nowcasting lineal). Estimación propia, no oficial.",
-            "diagnostico": diagnostico,
-        }
-    except Exception as e:
-        return {"ok": False, "error": f"No se pudo calcular la trayectoria: {str(e)}"}
-
-
-@app.route('/api/storm-trajectory', methods=['GET'])
-def storm_trajectory():
-    now = time.time()
-    if _trajectory_cache["data"] is not None and (now - _trajectory_cache["ts"]) < CACHE_TTL_TRAJECTORY:
-        return jsonify(_trajectory_cache["data"])
-
-    resultado = analizar_trayectoria_tormenta()
-    _trajectory_cache["data"] = resultado
-    _trajectory_cache["ts"] = now
-    return jsonify(resultado)
 
 
 @app.route('/')

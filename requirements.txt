@@ -1,5 +1,4 @@
 Flask
 Flask-Cors
 requests
-beautifulsoup4
-Pillow
+

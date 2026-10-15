@@ -21,55 +21,61 @@ class AgenteMeteorologo:
 
 
 class AgenteTermodinamicoGranizo:
-    """Agente 2: Analiza la severidad y el potencial de granizo combinando CAPE, ráfagas y altitud."""
+    """Agente 2 (Sensible/Preventivo): Analiza la severidad y el potencial de granizo 
+    con umbrales más bajos para garantizar una alerta temprana."""
     def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh):
         score = 0
         detail = []
 
+        # Umbrales de CAPE más sensibles para detectar inestabilidad antes
         if cape is not None:
-            if cape >= 4000:
-                score += 40
+            if cape >= 3000:
+                score += 45
                 detail.append(f"CAPE muy alto ({cape:.0f} J/kg)")
-            elif cape >= 2500:
-                score += 30
+            elif cape >= 1800:
+                score += 35
                 detail.append(f"CAPE alto ({cape:.0f} J/kg)")
-            elif cape >= 1000:
-                score += 15
+            elif cape >= 800:
+                score += 20
                 detail.append(f"CAPE moderado ({cape:.0f} J/kg)")
             elif cape >= 300:
-                score += 5
-                detail.append(f"CAPE bajo ({cape:.0f} J/kg)")
+                score += 10
+                detail.append(f"CAPE bajo / inestabilidad inicial ({cape:.0f} J/kg)")
 
+        # Nivel de congelamiento (si está bajo, favorece que la piedra no se derrita)
         if freezing_level_m is not None:
-            if freezing_level_m <= 3000:
+            if freezing_level_m <= 3200:
                 score += 25
                 detail.append(f"nivel de congelamiento bajo ({freezing_level_m:.0f} m)")
-            elif freezing_level_m <= 4000:
-                score += 12
+            elif freezing_level_m <= 4200:
+                score += 15
                 detail.append(f"nivel de congelamiento moderado ({freezing_level_m:.0f} m)")
 
         HAIL_CODES = {96, 99}
         if weather_code in HAIL_CODES:
-            score += 25
+            score += 30
             detail.append("modelo indica tormenta con granizo")
         elif weather_code == 95:
-            score += 10
-            detail.append("modelo indica tormenta")
+            score += 15
+            detail.append("modelo indica tormenta eléctrica")
 
+        # Ráfagas de viento más sensibles
         if wind_gusts_kmh is not None:
-            if wind_gusts_kmh >= 70:
-                score += 10
+            if wind_gusts_kmh >= 65:
+                score += 15
                 detail.append(f"ráfagas fuertes ({wind_gusts_kmh:.0f} km/h)")
-            elif wind_gusts_kmh >= 50:
-                score += 5
+            elif wind_gusts_kmh >= 45:
+                score += 8
                 detail.append(f"ráfagas moderadas ({wind_gusts_kmh:.0f} km/h)")
 
         score = min(score, 100)
-        if score >= 60:
+        
+        # Umbrales de nivel más accesibles para activar avisos preventivos
+        if score >= 50:
             nivel = "Alto"
-        elif score >= 35:
+        elif score >= 28:
             nivel = "Moderado"
-        elif score >= 15:
+        elif score >= 12:
             nivel = "Bajo"
         else:
             nivel = "Muy bajo"
@@ -80,7 +86,7 @@ class AgenteTermodinamicoGranizo:
 class AgenteGeoespacialETA:
     """Agente 3: Calcula distancias geográficas y Tiempos Estimados de Llegada (ETA) por zonas y barrios."""
     def __init__(self, destinos):
-        self.destinos = destinos # Lista de tuplas: (nombre, lat, lon)
+        self.destinos = destinos
 
     def _haversine_km(self, lat1, lon1, lat2, lon2):
         R = 6371.0
@@ -89,9 +95,6 @@ class AgenteGeoespacialETA:
         dlambda = math.radians(lon2 - lon1)
         a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
         return 2 * R * math.asin(math.sqrt(a))
-
-    narrativa_rumbo = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
-                       "S", "SSO", "SO", "OSO", "O", "ONO", "NO", "NNO"]
 
     def calcular_etas(self, lat_actual, lon_actual, velocidad_kmh):
         etas = []

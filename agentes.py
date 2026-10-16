@@ -27,7 +27,6 @@ class AgenteTermodinamicoGranizo:
         score = 0
         detail = []
 
-        # Umbrales de CAPE más sensibles para detectar inestabilidad antes
         if cape is not None:
             if cape >= 3000:
                 score += 45
@@ -42,7 +41,6 @@ class AgenteTermodinamicoGranizo:
                 score += 10
                 detail.append(f"CAPE bajo / inestabilidad inicial ({cape:.0f} J/kg)")
 
-        # Nivel de congelamiento (si está bajo, favorece que la piedra no se derrita)
         if freezing_level_m is not None:
             if freezing_level_m <= 3200:
                 score += 25
@@ -59,7 +57,6 @@ class AgenteTermodinamicoGranizo:
             score += 15
             detail.append("modelo indica tormenta eléctrica")
 
-        # Ráfagas de viento más sensibles
         if wind_gusts_kmh is not None:
             if wind_gusts_kmh >= 65:
                 score += 15
@@ -70,7 +67,6 @@ class AgenteTermodinamicoGranizo:
 
         score = min(score, 100)
         
-        # Umbrales de nivel más accesibles para activar avisos preventivos
         if score >= 50:
             nivel = "Alto"
         elif score >= 28:
@@ -111,6 +107,7 @@ class AgenteGeoespacialETA:
             })
         return etas
 
+
 class AgenteConversacional:
     """Agente 4: Responde preguntas frecuentes de los usuarios en lenguaje natural 
     utilizando la información acumulada de los otros agentes."""
@@ -118,7 +115,6 @@ class AgenteConversacional:
     def responder_consulta(self, pregunta, datos_clima, datos_trayectoria):
         pregunta = pregunta.lower().strip()
         
-        # 1. Consultas sobre Granizo
         if any(w in pregunta for w in ["granizo", "piedra", "manga"]):
             idx = datos_clima.get("hail_index", {})
             nivel = idx.get("nivel", "Desconocido")
@@ -131,7 +127,6 @@ class AgenteConversacional:
                 f"*(Recordá que es una estimación del modelo, chequeá siempre el radar en vivo)*."
             )
 
-        # 2. Consultas sobre Lluvia / Caída de agua / Precipitación
         elif any(w in pregunta for w in ["lluvia", "agua", "cuanto va a llover", "precipitacion", "tormenta"]):
             cond = datos_clima.get("current_conditions", {})
             precip = cond.get("precipitation_mm", 0)
@@ -147,7 +142,6 @@ class AgenteConversacional:
             
             return res
 
-        # 3. Consultas sobre Llegada / ETA / Barrios
         elif any(w in pregunta for w in ["cuando llega", "eta", "barrio", "llegada", "zona", "centro", "cerro", "arguello"]):
             if not datos_trayectoria or not datos_trayectoria.get("ok"):
                 return "📡 En este momento el radar no detecta una tormenta activa en camino a la Capital."
@@ -163,7 +157,6 @@ class AgenteConversacional:
             
             return res
 
-        # 4. Consultas sobre Temperatura y Viento
         elif any(w in pregunta for w in ["temperatura", "calor", "frio", "viento", "rafagas"]):
             cond = datos_clima.get("current_conditions", {})
             temp = cond.get("temperature_c", "--")
@@ -172,7 +165,6 @@ class AgenteConversacional:
             
             return f"🌡️ **Temperatura actual:** {temp}°C.\n💨 **Viento:** {viento} km/h (Ráfagas de hasta {rafagas} km/h)."
 
-        # 5. Respuesta por defecto
         else:
             return (
                 "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme cosas como:\n"

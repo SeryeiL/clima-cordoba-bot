@@ -1,216 +1,277 @@
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-from datetime import datetime, timedelta, timezone
-import time
-import os
-import threading
+import math
+import requests
 
-# Importamos nuestros agentes especializados
-from agentes import (
-    AgenteMeteorologo,
-    AgenteMeteorologoRespaldo,
-    AgenteTermodinamicoGranizo,
-    AgenteGeoespacialETA,
-    AgenteConversacional,
-)
+class AgenteMeteorologo:
+    """Agente 1: Recopila datos del clima y vientos en altura desde Open-Meteo."""
 
-app = Flask(__name__)
-CORS(app)
+    # Identificarse ayuda a que Open-Meteo no te clasifique en el bucket más
+    # agresivo de límites para tráfico anónimo. Poné un contacto real tuyo.
+    USER_AGENT = "ClimaCordobaBot/1.0 github.com/SeryeiL/clima-cordoba-bot"
 
-arg_tz = timezone(timedelta(hours=-3))
-LAT = -31.4201
-LON = -64.1888
+    def __init__(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
 
-# Instanciamos los agentes con sus configuraciones base
-agente_meteo = AgenteMeteorologo(LAT, LON)
-agente_meteo_respaldo = AgenteMeteorologoRespaldo(LAT, LON)
-agente_granizo = AgenteTermodinamicoGranizo()
-agente_chat = AgenteConversacional()
-
-DESTINOS_CAPITAL = [
-    ("Centro", LAT, LON),
-    ("Zona Norte (Cerro de las Rosas / Villa Belgrano)", -31.3765, -64.2356),
-    ("Zona Sur (Villa El Libertador / Juniors)", -31.4762, -64.1739),
-    ("Zona Oeste (Argüello)", -31.3886, -64.2653),
-    ("Zona Este (Barrio Jardín / Gral. Paz)", -31.4075, -64.1578),
-]
-agente_geo = AgenteGeoespacialETA(DESTINOS_CAPITAL)
-
-# Cachés simples en memoria
-_weather_cache = {"data": None, "ts": 0, "ok": None}
-_trajectory_cache = {"data": None, "ts": 0, "ok": None}
-_weather_last_good = {"data": None, "ts": 0}
-CACHE_TTL_WEATHER_OK = 180
-_refresh_lock = threading.Lock()
-_started_ts = time.time()
-
-WEATHER_CODE_MAP = {
-    0: "Despejado", 1: "Mayormente despejado", 2: "Parcialmente nublado", 3: "Nublado",
-    45: "Niebla", 48: "Niebla con escarcha", 51: "Llovizna débil", 53: "Llovizna moderada",
-    55: "Llovizna intensa", 61: "Lluvia débil", 63: "Lluvia moderada", 65: "Lluvia intensa",
-    80: "Chubascos débiles", 81: "Chubascos moderados", 82: "Chubascos intensos",
-    95: "Tormenta", 96: "Tormenta con granizo leve", 99: "Tormenta con granizo fuerte",
-}
-HAIL_CODES = {96, 99}
-
-def evaluar_formacion_tormenta(forecast_timeline, indice_granizo):
-    """Evalúa formación de tormenta de forma más estricta para evitar falsos positivos."""
-    probs = [p.get("precip_probability") for p in (forecast_timeline or [])]
-    probs = [p for p in probs if isinstance(p, (int, float))]
-    altas = [p for p in probs if p >= 75]  # Subimos exigencia a 75%
-    
-    # Solo alerta por formación si hay alta probabilidad Y el agente detecta algo de inestabilidad (score >= 15)
-    if len(altas) >= 2 and indice_granizo.get("score", 0) >= 15:
-        return True, f"El pronóstico indica {max(altas):.0f}% de probabilidad de precipitación con inestabilidad atmosférica."
-    return False, None
+    def obtener_estado_actual(self):
+        url = (
+            "https://api.open-meteo.com/v1/forecast"
+            f"?latitude={self.lat}&longitude={self.lon}"
+            "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,weather_code"
+            "&hourly=precipitation_probability,cape,freezing_level_height,wind_speed_10m,wind_speed_80m"
+            "&timezone=America%2FArgentina%2FCordoba&forecast_days=1"
+        )
+        resp = requests.get(url, headers={"User-Agent": self.USER_AGENT}, timeout=8)
+        resp.raise_for_status()
+        return resp.json()
 
 
-def _armar_datos_con_agentes(meteo_data, now, current_time_str):
-    """El orquestador coordina la salida de los agentes."""
-    current = meteo_data["current"]
-    code = current.get("weather_code", 0)
-    condition_text = WEATHER_CODE_MAP.get(code, "Condición desconocida")
-    hail_possible = code in HAIL_CODES
+class AgenteMeteorologoRespaldo:
+    """Agente 1b: Fuente de respaldo (MET Norway) cuando Open-Meteo no responde.
 
-    wind_speed = current.get("wind_speed_10m", 0) or 0
-    wind_gusts = current.get("wind_gusts_10m", 0) or 0
-    precipitation = current.get("precipitation", 0) or 0
+    No trae CAPE ni altura de congelamiento, así que el índice de granizo
+    calculado a partir de estos datos queda en "modo reducido" (menos preciso).
+    """
 
-    hourly = meteo_data.get("hourly", {})
-    hourly_times = hourly.get("time", [])
-    hourly_probs = hourly.get("precipitation_probability", [])
-    hourly_cape = hourly.get("cape", [])
-    hourly_freezing = hourly.get("freezing_level_height", [])
-    hourly_w80 = hourly.get("wind_speed_80m", [])
+    # MET Norway pide identificar la app con contacto en el User-Agent (su ToS lo exige).
+    # Reemplazá el contacto por uno real tuyo si vas a usar esto en producción.
+    USER_AGENT = "ClimaCordobaBot/1.0 github.com/tu-usuario/clima-cordoba-bot"
 
-    current_hour_str = now.strftime("%Y-%m-%dT%H:00")
-    start_idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
-
-    cape_now = hourly_cape[start_idx] if start_idx < len(hourly_cape) else None
-    freezing_now = hourly_freezing[start_idx] if start_idx < len(hourly_freezing) else None
-    wind_80_now = hourly_w80[start_idx] if start_idx < len(hourly_w80) else None
-
-    # Primero evaluamos el índice de granizo/inestabilidad
-    indice_granizo = agente_granizo.evaluar_riesgo(
-        cape_now, freezing_now, code, wind_gusts, wind_speed, wind_80_now
-    )
-
-    forecast_timeline = []
-    for h in range(start_idx, min(start_idx + 4, len(hourly_times))):
-        hour_label = hourly_times[h].split("T")[1]
-        forecast_timeline.append({
-            "hour": hour_label,
-            "precip_probability": hourly_probs[h] if h < len(hourly_probs) else None
-        })
-
-    # Evaluamos formación de tormenta pasando el índice calculado
-    storm_forming, storm_forming_detail = evaluar_formacion_tormenta(forecast_timeline, indice_granizo)
-
-    if indice_granizo["nivel"] == "Alto":
-        alert_level = "naranja"
-    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 55 or precipitation >= 10:
-        alert_level = "amarilla"
-    elif storm_forming:
-        alert_level = "amarilla"
-    else:
-        alert_level = "ninguna"
-
-    return {
-        "source": "Sistema Multi-Agente Avanzado (Open-Meteo + Cizalladura + Radar)",
-        "source_id": "open-meteo-agentes-avanzados",
-        "current_conditions": {
-            "temperature_c": current.get("temperature_2m"),
-            "humidity_pct": current.get("relative_humidity_2m"),
-            "wind_speed_kmh": wind_speed,
-            "wind_gusts_kmh": wind_gusts,
-            "precipitation_mm": precipitation,
-            "condition_text": condition_text,
-            "condition_code": code,
-            "cape": cape_now,
-            "freezing_level_m": freezing_now,
-        },
-        "hail_index": indice_granizo,
-        "alert_level": alert_level,
-        "hail_possible": hail_possible or indice_granizo["score"] >= 30, # Ajustado para evitar falsos positivos menores
-        "storm_forming": storm_forming,
-        "storm_forming_detail": storm_forming_detail,
-        "forecast_timeline": forecast_timeline,
-        "degraded": False,
-        "smn_official_url": "https://www.smn.gob.ar/pronostico/cordoba",
-        "last_update": current_time_str,
-        "ok": True,
-        "stale": False,
+    SYMBOL_MAP = {
+        "clearsky": "Despejado",
+        "fair": "Mayormente despejado",
+        "partlycloudy": "Parcialmente nublado",
+        "cloudy": "Nublado",
+        "fog": "Niebla",
+        "lightrain": "Llovizna",
+        "rain": "Lluvia",
+        "heavyrain": "Lluvia intensa",
+        "lightrainshowers": "Chubascos débiles",
+        "rainshowers": "Chubascos",
+        "heavyrainshowers": "Chubascos intensos",
+        "lightrainandthunder": "Llovizna con tormenta",
+        "rainandthunder": "Lluvia con tormenta",
+        "heavyrainandthunder": "Tormenta fuerte",
+        "rainshowersandthunder": "Chubascos con tormenta",
+        "heavyrainshowersandthunder": "Chubascos intensos con tormenta",
+        "thunder": "Tormenta eléctrica",
+        "sleet": "Aguanieve",
+        "snow": "Nieve",
     }
 
+    def __init__(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
 
-@app.route('/api/live-weather', methods=['GET'])
-def live_weather():
-    now_ts = time.time()
-    if _weather_cache["data"] is not None and (now_ts - _weather_cache["ts"]) < CACHE_TTL_WEATHER_OK:
-        return jsonify(_weather_cache["data"])
-    
-    try:
-        raw_data = agente_meteo.obtener_estado_actual()
-        now = datetime.now(arg_tz)
-        current_str = now.strftime("%d/%m/%Y %H:%M:%S")
-        
-        resultado = _armar_datos_con_agentes(raw_data, now, current_str)
-        _weather_cache["data"] = resultado
-        _weather_cache["ts"] = now_ts
-        _weather_cache["ok"] = True
-        _weather_last_good["data"] = resultado
-        _weather_last_good["ts"] = now_ts
-        return jsonify(resultado)
-    except Exception as e:
-        if _weather_last_good["data"]:
-            return jsonify(_weather_last_good["data"])
-        return jsonify({"ok": False, "error": str(e)}), 500
+    def obtener_estado_actual(self):
+        url = (
+            "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+            f"?lat={self.lat}&lon={self.lon}"
+        )
+        headers = {"User-Agent": self.USER_AGENT}
+        resp = requests.get(url, headers=headers, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
 
+        timeseries = data.get("properties", {}).get("timeseries", [])
+        if not timeseries:
+            raise ValueError("MET Norway no devolvió datos de pronóstico")
 
-@app.route('/api/storm-trajectory', methods=['GET'])
-def storm_trajectory():
-    """Endpoint simplificado de trayectoria y ETAs para el radar."""
-    try:
-        velocidad_estimada = 35  # km/h
-        rumbo_grados = 135       # SE
-        etas = agente_geo.calcular_etas(LAT, LON, velocidad_estimada)
-        
-        trajectory_data = {
-            "ok": True,
-            "zona_actual_aproximada": "Sierras Chicas / Noroeste",
-            "rumbo_grados": rumbo_grados,
-            "rumbo_compass": "Sudeste (SE)",
-            "velocidad_estim_kmh": velocidad_estimada,
-            "etas_por_zona": etas
+        ahora = timeseries[0]
+        instant = ahora.get("data", {}).get("instant", {}).get("details", {})
+        next1 = ahora.get("data", {}).get("next_1_hours", {})
+        symbol_code = (next1.get("summary", {}) or {}).get("symbol_code", "")
+        precip_next1 = (next1.get("details", {}) or {}).get("precipitation_amount", 0) or 0
+
+        current = {
+            "temperature_2m": instant.get("air_temperature"),
+            "relative_humidity_2m": instant.get("relative_humidity"),
+            "precipitation": precip_next1,
+            "wind_speed_10m": instant.get("wind_speed"),
+            # El producto "compact" de MET Norway no trae ráfagas; queda sin dato.
+            "wind_gusts_10m": instant.get("wind_speed_of_gust"),
+            "symbol_code": symbol_code,
         }
-        _trajectory_cache["data"] = trajectory_data
-        _trajectory_cache["ts"] = time.time()
-        return jsonify(trajectory_data)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+
+        forecast_timeline = []
+        for entry in timeseries[:5]:
+            t = entry.get("time", "")
+            hour_label = t.split("T")[1][:5] if "T" in t else "--"
+            n1 = entry.get("data", {}).get("next_1_hours", {})
+            precip = (n1.get("details", {}) or {}).get("precipitation_amount", 0) or 0
+            # MET Norway no da probabilidad; aproximamos con un valor fijo
+            # cuando hay precipitación esperada, para no inventar precisión falsa.
+            prob = 70 if precip > 0 else 0
+            forecast_timeline.append({"hour": hour_label, "precip_probability": prob})
+
+        return {
+            "current": current,
+            "forecast_timeline": forecast_timeline,
+            "symbol_code": symbol_code,
+        }
+
+    def condicion_texto(self, symbol_code):
+        base = (symbol_code or "").split("_")[0]  # saca sufijos tipo "_day" / "_night"
+        return self.SYMBOL_MAP.get(base, "Condición desconocida (respaldo)")
+
+    def hay_tormenta(self, symbol_code):
+        return "thunder" in (symbol_code or "")
 
 
-@app.route('/api/chat', methods=['POST', 'OPTIONS'])
-def chat_clima():
-    """Endpoint del Agente Conversacional para procesar preguntas desde la web."""
-    if request.method == 'OPTIONS':
-        return jsonify({"ok": True}), 200
+class AgenteTermodinamicoGranizo:
+    """Agente 2: Evalúa CAPE, congelamiento, códigos de tormenta y cizalladura de forma segura."""
+    def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh=0, wind_surface=0, wind_high=0):
+        score = 0
+        detail = []
+
+        # 1. CAPE (Energía Convectiva)
+        if cape is not None:
+            if cape >= 3000:
+                score += 40
+                detail.append(f"CAPE extremo ({cape:.0f} J/kg)")
+            elif cape >= 1800:
+                score += 30
+                detail.append(f"CAPE alto ({cape:.0f} J/kg)")
+            elif cape >= 800:
+                score += 15
+                detail.append(f"CAPE moderado ({cape:.0f} J/kg)")
+            elif cape >= 300:
+                score += 8
+                detail.append(f"inestabilidad inicial ({cape:.0f} J/kg)")
+
+        # 2. Altura de congelamiento
+        if freezing_level_m is not None:
+            if freezing_level_m <= 3000:
+                score += 25
+                detail.append(f"congelamiento muy bajo ({freezing_level_m:.0f} m)")
+            elif freezing_level_m <= 3800:
+                score += 15
+                detail.append(f"congelamiento favorable ({freezing_level_m:.0f} m)")
+
+        # 3. Cizalladura del viento (Segura ante valores nulos)
+        try:
+            if wind_surface is not None and wind_high is not None:
+                cizalladura = float(wind_high) - float(wind_surface)
+                if cizalladura >= 35:
+                    score += 20
+                    detail.append(f"cizalladura severa (+{cizalladura:.0f} km/h)")
+                elif cizalladura >= 20:
+                    score += 10
+                    detail.append(f"cizalladura moderada (+{cizalladura:.0f} km/h)")
+        except Exception:
+            pass
+
+        # 4. Códigos de clima y ráfagas
+        HAIL_CODES = {96, 99}
+        if weather_code in HAIL_CODES:
+            score += 25
+            detail.append("modelo detecta tormenta severa")
+        elif weather_code == 95:
+            score += 12
+            detail.append("modelo detecta tormenta eléctrica")
+
+        if wind_gusts_kmh is not None and wind_gusts_kmh >= 50:
+            score += 10
+            detail.append(f"ráfagas fuertes ({wind_gusts_kmh:.0f} km/h)")
+
+        score = min(score, 100)
         
-    body = request.get_json() or {}
-    pregunta = body.get("pregunta", "")
-    
-    clima_actual = _weather_cache.get("data") or {}
-    trayectoria_actual = _trajectory_cache.get("data") or {}
-    
-    respuesta = agente_chat.responder_consulta(pregunta, clima_actual, trayectoria_actual)
-    return jsonify({"respuesta": respuesta})
+        if score >= 50:
+            nivel = "Alto"
+        elif score >= 25:
+            nivel = "Moderado"
+        elif score >= 12:
+            nivel = "Bajo"
+        else:
+            nivel = "Muy bajo"
+
+        return {"score": score, "nivel": nivel, "factores": detail}
 
 
-@app.route('/')
-def home():
-    return "🤖 Sistema Multi-Agente Avanzado de Clima Córdoba - API activa."
+class AgenteGeoespacialETA:
+    """Agente 3: Calcula distancias geográficas y Tiempos Estimados de Llegada (ETA) por zonas."""
+    def __init__(self, destinos):
+        self.destinos = destinos
+
+    def _haversine_km(self, lat1, lon1, lat2, lon2):
+        R = 6371.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    def calcular_etas(self, lat_actual, lon_actual, velocidad_kmh):
+        etas = []
+        for nombre, lat_dest, lon_dest in self.destinos:
+            dist_km = self._haversine_km(lat_actual, lon_actual, lat_dest, lon_dest)
+            if velocidad_kmh < 2:
+                eta_min = None
+            else:
+                eta_min = round((dist_km / velocidad_kmh) * 60)
+            etas.append({
+                "zona": nombre,
+                "distancia_km": round(dist_km, 1),
+                "eta_minutos": eta_min
+            })
+        return etas
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+class AgenteConversacional:
+    """Agente 4: Responde consultas del usuario utilizando la información de los demás agentes."""
+    def responder_consulta(self, pregunta, datos_clima, datos_trayectoria):
+        pregunta = pregunta.lower().strip()
+        
+        if any(w in pregunta for w in ["granizo", "piedra", "manga"]):
+            idx = datos_clima.get("hail_index", {})
+            nivel = idx.get("nivel", "Desconocido")
+            score = idx.get("score", 0)
+            factores = ", ".join(idx.get("factores", [])) or "sin factores de riesgo detectados"
+            
+            return (
+                f"🧊 **Riesgo de Granizo:** Actualmente el nivel es **{nivel}** ({score}/100).\n"
+                f"**Factores analizados:** {factores}.\n"
+                f"*(Recordá que es una estimación analítica, chequeá siempre el radar en vivo)*."
+            )
+
+        elif any(w in pregunta for w in ["lluvia", "agua", "cuanto va a llover", "precipitacion", "tormenta"]):
+            cond = datos_clima.get("current_conditions", {})
+            precip = cond.get("precipitation_mm", 0)
+            timeline = datos_clima.get("forecast_timeline", [])
+            prob_max = max([p.get("precip_probability", 0) for p in timeline], default=0) if timeline else 0
+            
+            res = f"🌧️ **Precipitación actual:** {precip} mm.\n"
+            if prob_max > 0:
+                res += f"**Probabilidad máxima para las próximas horas:** {prob_max}%.\n"
+            else:
+                res += "**Pronóstico corto plazo:** Sin probabilidad significativa de lluvia por ahora.\n"
+            return res
+
+        elif any(w in pregunta for w in ["cuando llega", "eta", "barrio", "llegada", "zona", "centro", "cerro", "arguello"]):
+            if not datos_trayectoria or not datos_trayectoria.get("ok"):
+                return "📡 En este momento el radar no detecta una tormenta activa en camino a la Capital."
+            
+            etas = datos_trayectoria.get("etas_por_zona", [])
+            velocidad = datos_trayectoria.get("velocidad_estim_kmh", 0)
+            rumbo = datos_trayectoria.get("rumbo_compass", "--")
+            
+            res = f"🛰️ **Trayectoria de tormenta (Avance a {velocidad} km/h hacia el {rumbo}):**\n"
+            for z in etas:
+                eta_txt = f"~{z['eta_minutos']} min" if z.get("eta_minutos") is not None else "sin tiempo estimado"
+                res += f"• **{z['zona']}:** {eta_txt} ({z['distancia_km']} km)\n"
+            return res
+
+        elif any(w in pregunta for w in ["temperatura", "calor", "frio", "viento", "rafagas"]):
+            cond = datos_clima.get("current_conditions", {})
+            temp = cond.get("temperature_c", "--")
+            viento = cond.get("wind_speed_kmh", "--")
+            rafagas = cond.get("wind_gusts_kmh", "--")
+            return f"🌡️ **Temperatura actual:** {temp}°C.\n💨 **Viento:** {viento} km/h (Ráfagas de hasta {rafagas} km/h)."
+
+        else:
+            return (
+                "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme:\n"
+                "• *¿Hay riesgo de granizo?*\n"
+                "• *¿Cuándo llega la tormenta a tu barrio?*\n"
+                "• *¿Cuánta agua se espera que caiga?*\n"
+                "• *¿Cómo está la temperatura y el viento?*"
+            )

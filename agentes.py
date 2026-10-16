@@ -3,6 +3,11 @@ import requests
 
 class AgenteMeteorologo:
     """Agente 1: Recopila datos del clima y vientos en altura desde Open-Meteo."""
+
+    # Identificarse ayuda a que Open-Meteo no te clasifique en el bucket más
+    # agresivo de límites para tráfico anónimo. Poné un contacto real tuyo.
+    USER_AGENT = "ClimaCordobaBot/1.0 github.com/SeryeiL/clima-cordoba-bot"
+
     def __init__(self, lat, lon):
         self.lat = lat
         self.lon = lon
@@ -15,7 +20,7 @@ class AgenteMeteorologo:
             "&hourly=precipitation_probability,cape,freezing_level_height,wind_speed_10m,wind_speed_80m"
             "&timezone=America%2FArgentina%2FCordoba&forecast_days=1"
         )
-        resp = requests.get(url, timeout=8)
+        resp = requests.get(url, headers={"User-Agent": self.USER_AGENT}, timeout=8)
         resp.raise_for_status()
         return resp.json()
 

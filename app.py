@@ -5,8 +5,8 @@ import time
 import os
 import threading
 
-# Importamos nuestros agentes especializados
-from agentes import AgenteMeteorologo, AgenteTermodinamicoGranizo, AgenteGeoespacialETA
+# Importamos nuestros agentes especializados (incluyendo el conversacional)
+from agentes import AgenteMeteorologo, AgenteTermodinamicoGranizo, AgenteGeoespacialETA, AgenteConversacional
 
 app = Flask(__name__)
 CORS(app)
@@ -18,6 +18,7 @@ LON = -64.1888
 # Instanciamos los agentes con sus configuraciones base
 agente_meteo = AgenteMeteorologo(LAT, LON)
 agente_granizo = AgenteTermodinamicoGranizo()
+agente_chat = AgenteConversacional()
 
 DESTINOS_CAPITAL = [
     ("Centro", LAT, LON),
@@ -28,8 +29,9 @@ DESTINOS_CAPITAL = [
 ]
 agente_geo = AgenteGeoespacialETA(DESTINOS_CAPITAL)
 
-# Caché simple en memoria
+# Cachés simples en memoria
 _weather_cache = {"data": None, "ts": 0, "ok": None}
+_trajectory_cache = {"data": None, "ts": 0, "ok": None}
 _weather_last_good = {"data": None, "ts": 0}
 CACHE_TTL_WEATHER_OK = 180
 _refresh_lock = threading.Lock()
@@ -140,6 +142,8 @@ def live_weather():
         _weather_cache["data"] = resultado
         _weather_cache["ts"] = now_ts
         _weather_cache["ok"] = True
+        _weather_last_good["data"] = resultado
+        _weather_last_good["ts"] = now_ts
         return jsonify(resultado)
     except Exception as e:
         if _weather_last_good["data"]:
@@ -147,25 +151,27 @@ def live_weather():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
-@app.route('/')
-def home():
-    return "🤖 Sistema Multi-Agente de Clima Córdoba - API activa."
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
-
-from agentes import AgenteConversacional  # Asegúrate de importar el nuevo agente
-
-agente_chat = AgenteConversacional()
-
-@app.route('/api/chat', methods=['POST'])
+@app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def chat_clima():
+    """Endpoint del Agente Conversacional para procesar preguntas desde la web."""
+    if request.method == 'OPTIONS':
+        return jsonify({"ok": True}), 200
+        
     body = request.get_json() or {}
     pregunta = body.get("pregunta", "")
     
-    # Obtenemos el clima y la trayectoria actual para responder con datos frescos
+    # Obtenemos el clima y la trayectoria actual de las cachés
     clima_actual = _weather_cache.get("data") or {}
     trayectoria_actual = _trajectory_cache.get("data") or {}
     
     respuesta = agente_chat.responder_consulta(pregunta, clima_actual, trayectoria_actual)
     return jsonify({"respuesta": respuesta})
+
+
+@app.route('/')
+def home():
+    return "🤖 Sistema Multi-Agente de Clima Córdoba - API activa."
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)

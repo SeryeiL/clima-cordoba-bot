@@ -57,9 +57,6 @@
         .radar-attribution { font-size: 0.7rem; color: #64748b; margin-top: 6px; }
         .radar-attribution a { color: #38bdf8; text-decoration: none; }
 
-        /* Radar oficial del OHMC (Córdoba), como alternativa cuando RainViewer no tiene
-           datos de la región (le pasa seguido a Argentina). No pudimos previsualizar este
-           embed en nuestro entorno de pruebas, por eso el enlace directo queda siempre a mano. */
         .ohmc-frame-wrap { position: relative; width: 100%; height: 480px; border-radius: 8px; overflow: hidden; background: #0b0f19; border: 1px solid #334155; }
         .ohmc-frame-wrap iframe { width: 100%; height: 100%; border: none; }
         .ohmc-fallback { font-size: 0.8rem; color: #94a3b8; text-align: center; padding: 8px 0 0 0; }
@@ -78,10 +75,25 @@
         <!-- Aviso de estado de los datos -->
         <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
 
-        <!-- Banner de posible granizo (según el modelo, no es una confirmación) -->
+        <!-- Banner de posible granizo (según el modelo) -->
         <div id="hailAlertBanner" class="hail-alert-banner">
             ⚠️ <span id="hailAlertTitle">El modelo indica posible tormenta con granizo</span> ⚠️<br>
             <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Es una estimación del modelo, no una confirmación. Mirá el radar y el parte oficial del SMN.</span>
+        </div>
+
+        <!-- Nuevo: Tarjeta de Consulta al Agente Climático -->
+        <div class="card">
+            <h3>🤖 Consulta al Agente Climático</h3>
+            <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Preguntale al bot sobre granizo, tiempo de llegada a barrios o lluvias.</p>
+            
+            <div id="chat-box" style="background: #0b0f19; border: 1px solid #334155; border-radius: 8px; padding: 10px; height: 180px; overflow-y: auto; font-size: 0.85rem; margin-bottom: 10px;">
+                <div style="color: #38bdf8; margin-bottom: 8px;">🤖 <strong>Bot:</strong> ¡Hola! Preguntame sobre el granizo, lluvias o cuándo llega la tormenta a tu zona.</div>
+            </div>
+            
+            <div style="display: flex; gap: 8px;">
+                <input type="text" id="chat-input" placeholder="Ej: ¿Hay riesgo de granizo?" style="flex: 1; background: #0f172a; border: 1px solid #334155; color: white; padding: 8px 12px; border-radius: 6px; font-size: 0.85rem;">
+                <button onclick="enviarConsultaChat()" style="background: #0284c7; color: white; border: none; padding: 8px 15px; border-radius: 6px; font-size: 0.85rem; cursor: pointer;">Consultar</button>
+            </div>
         </div>
 
         <!-- Imagen Satelital / Radar en Vivo -->
@@ -93,11 +105,7 @@
             </div>
         </div>
 
-        <!-- Radar oficial del OHMC (Observatorio Hidrometeorológico de Córdoba) -->
-        <!-- Antes mostrábamos acá un radar propio hecho con mosaicos de RainViewer, pero
-             RainViewer suele quedarse sin datos de la región por ratos largos para Argentina
-             (es un problema conocido y recurrente del lado de RainViewer, no de esta página),
-             así que lo reemplazamos por el radar propio del OHMC, que no depende de esa fuente. -->
+        <!-- Radar oficial del OHMC -->
         <div class="card">
             <h3>Radar Oficial — OHMC (Córdoba)</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">
@@ -110,9 +118,7 @@
             <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
-        <!-- Trayectoria y ETA estimadas — calculado sobre el radar real RMA1 (vía OHMC),
-             no sobre RainViewer (esa versión anterior se sacó porque casi nunca tenía señal
-             útil para Argentina). Es una estimación propia (nowcasting lineal simple). -->
+        <!-- Trayectoria y ETA estimadas -->
         <div class="card">
             <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Radar real (RMA1)</span></h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
@@ -170,7 +176,7 @@
             <ul id="hail-index-factors" style="font-size:0.8rem; color:#cbd5e1; margin: 10px 0 0 0; padding-left: 18px;"></ul>
         </div>
 
-        <!-- Feed real de X embebido directo (oficial, en vivo, sin scraping) -->
+        <!-- Feed real de X embebido directo -->
         <div class="card x-feed-card">
             <div class="x-feed-header">
                 <h3 style="margin: 0;">Reportes de @dimarcorafael</h3>
@@ -185,7 +191,6 @@
                 Tweets de @dimarcorafael
             </a>
 
-            <!-- Fallback por si el widget no carga (ad-blockers, red, etc.) -->
             <p class="x-feed-fallback">
                 ¿No ves los tuits? <a href="https://x.com/dimarcorafael" target="_blank" rel="noopener">Abrí el perfil directo en X</a>
             </p>
@@ -205,7 +210,6 @@
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
         const fmt = (v, suf) => (v === null || v === undefined || Number.isNaN(v)) ? "--" : (v + (suf || ""));
 
-        // fetch con tiempo máximo y sin caché del navegador (así nunca mostramos una respuesta vieja)
         async function fetchJSON(url, timeoutMs) {
             const ctrl = new AbortController();
             const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -218,7 +222,6 @@
             }
         }
 
-        // --- Aviso de estado de los datos ---
         function setBanner(kind, title, text) {
             const el = document.getElementById('statusBanner');
             if (!kind) { el.style.display = 'none'; el.className = 'status-banner'; el.innerHTML = ''; return; }
@@ -233,9 +236,38 @@
             b.style.background = color;
         }
 
-        // =====================================================================
-        // Trayectoria estimada (backend, sobre el radar real RMA1 vía OHMC)
-        // =====================================================================
+        // --- Lógica del Chat con el Agente Conversacional ---
+        async function enviarConsultaChat() {
+            const input = document.getElementById('chat-input');
+            const box = document.getElementById('chat-box');
+            const pregunta = input.value.trim();
+            
+            if (!pregunta) return;
+            
+            box.innerHTML += `<div style="text-align: right; color: #f8fafc; margin-bottom: 8px;"><strong>Vos:</strong> ${pregunta}</div>`;
+            input.value = '';
+            box.scrollTop = box.scrollHeight;
+            
+            try {
+                const res = await fetch(BACKEND + "/api/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ pregunta: pregunta })
+                });
+                const data = await res.json();
+                
+                const respuestaFormat = data.respuesta.replace(/\n/g, "<br>");
+                box.innerHTML += `<div style="color: #38bdf8; margin-bottom: 8px;">🤖 <strong>Bot:</strong><br>${respuestaFormat}</div>`;
+            } catch (e) {
+                box.innerHTML += `<div style="color: #ef4444; margin-bottom: 8px;">🤖 <strong>Bot:</strong> No pude responder en este momento. Intenta de nuevo.</div>`;
+            }
+            box.scrollTop = box.scrollHeight;
+        }
+
+        document.getElementById('chat-input').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') enviarConsultaChat();
+        });
+
         async function fetchTrajectory() {
             const box = document.getElementById('trajectory-content');
             try {
@@ -279,7 +311,7 @@
         }
 
         fetchTrajectory();
-        setInterval(fetchTrajectory, 5 * 60 * 1000); // cada 5 min, el radar solo cambia cada ~9-10
+        setInterval(fetchTrajectory, 5 * 60 * 1000);
 
         function requestNotificationPermission() {
             if ("Notification" in window) {
@@ -295,10 +327,7 @@
             }
         }
 
-        // =====================================================================
-        // Clima en vivo (backend: Open-Meteo, o MET Norway de respaldo)
-        // =====================================================================
-        let lastWeather = null;   // último dato recibido (para no dejar la pantalla vacía si falla una consulta)
+        let lastWeather = null;
         let weatherBusy = false;
 
         function edadMinutos(data) {
@@ -309,7 +338,6 @@
         }
 
         function renderWeather(data) {
-            // Estado de la fuente: normal / respaldo / desactualizado
             const edad = edadMinutos(data);
             if (data.stale === true) {
                 setBadge(`Datos de hace ${Math.round(data.stale_minutes)} min`, "#b45309");
@@ -353,8 +381,6 @@
                 ? "Próximas horas · lluvia prevista (aprox. del respaldo: 70% si se espera precipitación, 0% si no)"
                 : "Próximas horas · % de probabilidad de lluvia";
 
-            // Banner de posible granizo o tormenta en formación: es lo que indica
-            // el MODELO (actual o pronóstico), no una confirmación.
             const banner = document.getElementById('hailAlertBanner');
             if (data.hail_possible === true) {
                 banner.style.display = "block";
@@ -379,7 +405,6 @@
             document.getElementById('smn-alerts').innerHTML =
                 `<div><strong>${c.condition_text}</strong><br><small style="color:#cbd5e1;">Humedad: ${fmt(c.humidity_pct, "%")} · Viento sostenido: ${fmt(c.wind_speed_kmh, " km/h")}</small></div>`;
 
-            // Índice de riesgo de granizo
             const idx = data.hail_index;
             document.getElementById('hail-mode-chip').style.display = data.degraded === true ? "inline-block" : "none";
             if (idx) {
@@ -405,9 +430,6 @@
             document.getElementById('last-sync').innerText = sync;
         }
 
-        // Carga con tolerancia al "arranque en frío": el servidor gratuito de Render se duerme
-        // tras 15 min sin visitas y tarda hasta ~1 min en despertar. En vez de mostrar un error,
-        // se explica y se reintenta solo.
         async function loadWeather() {
             if (weatherBusy) return;
             weatherBusy = true;
@@ -462,7 +484,6 @@
         setInterval(loadWeather, 60000);
         loadWeather();
 
-        // Al volver a la pestaña (o al celular desde segundo plano), refrescar enseguida.
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 loadWeather();

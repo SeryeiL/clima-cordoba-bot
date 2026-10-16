@@ -15,7 +15,6 @@
         .metric { background: #0f172a; padding: 10px; border-radius: 8px; font-size: 0.9rem; }
         .metric span { display: block; color: #94a3b8; font-size: 0.75rem; }
 
-        /* Aviso de estado de los datos (servidor despertando / fuente de respaldo / datos viejos) */
         .status-banner { display: none; border-radius: 10px; padding: 10px 12px; margin-bottom: 15px; font-size: 0.82rem; line-height: 1.35; border: 1px solid transparent; }
         .status-banner strong { display: block; margin-bottom: 2px; }
         .status-banner.waking { background: #1e293b; border-color: #475569; color: #cbd5e1; }
@@ -25,15 +24,12 @@
 
         .chip { display: inline-block; font-size: 0.68rem; font-weight: bold; padding: 2px 8px; border-radius: 10px; background: #0369a1; color: #e0f2fe; vertical-align: middle; margin-left: 6px; }
 
-        /* Alerta de posible granizo según el modelo */
         .hail-alert-banner { display: none; background: linear-gradient(135deg, #ef4444, #b91c1c); color: white; border-radius: 10px; padding: 12px; margin-bottom: 15px; text-align: center; font-weight: bold; animation: pulse-alert 2s infinite; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5); }
         @keyframes pulse-alert { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
 
-        /* Contenedor de Imagen Satelital / Radar */
         .sat-container { position: relative; width: 100%; height: 260px; border-radius: 8px; overflow: hidden; background: #0b0f19; border: 1px solid #334155; }
         .sat-container iframe { width: 100% !important; height: 100% !important; border: none; }
 
-        /* Seguimiento Visual de la Tormenta */
         .tracking-box { background: #0b0f19; border: 1px solid #334155; border-radius: 8px; padding: 14px; margin-bottom: 15px; }
         .tracking-header { font-size: 0.85rem; color: #38bdf8; font-weight: bold; margin-bottom: 10px; display: flex; justify-content: space-between; }
 
@@ -46,7 +42,6 @@
         .timeline-label { font-size: 0.7rem; color: #94a3b8; margin-top: 6px; max-width: 90px; }
         .timeline-step.active .timeline-label { color: #f8fafc; font-weight: bold; }
 
-        /* Tarjeta del feed real de X */
         .x-feed-card .x-feed-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
         .x-feed-card .x-feed-subtitle { font-size: 0.8rem; color: #94a3b8; margin-top: 0; }
         .x-feed-fallback { font-size: 0.8rem; color: #64748b; text-align: center; padding: 10px 0; }
@@ -72,16 +67,14 @@
             <button class="notif-btn" onclick="requestNotificationPermission()">🔔 Activar Alertas Push</button>
         </header>
 
-        <!-- Aviso de estado de los datos -->
         <div id="statusBanner" class="status-banner" role="status" aria-live="polite"></div>
 
-        <!-- Banner de posible granizo (según el modelo) -->
         <div id="hailAlertBanner" class="hail-alert-banner">
             ⚠️ <span id="hailAlertTitle">El modelo indica posible tormenta con granizo</span> ⚠️<br>
             <span id="hailAlertText" style="font-size: 0.85rem; font-weight: normal;">Es una estimación del modelo, no una confirmación. Mirá el radar y el parte oficial del SMN.</span>
         </div>
 
-        <!-- Nuevo: Tarjeta de Consulta al Agente Climático -->
+        <!-- Tarjeta de Consulta al Agente Climático -->
         <div class="card">
             <h3>🤖 Consulta al Agente Climático</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Preguntale al bot sobre granizo, tiempo de llegada a barrios o lluvias.</p>
@@ -96,7 +89,6 @@
             </div>
         </div>
 
-        <!-- Imagen Satelital / Radar en Vivo -->
         <div class="card">
             <h3>Imagen Satelital & Radar (Córdoba)</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">Seguimiento en tiempo real de nubosidad y precipitaciones.</p>
@@ -105,7 +97,6 @@
             </div>
         </div>
 
-        <!-- Radar oficial del OHMC -->
         <div class="card">
             <h3>Radar Oficial — OHMC (Córdoba)</h3>
             <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 0;">
@@ -118,7 +109,6 @@
             <p class="radar-attribution">Fuente: <a href="https://webmet.ohmc.ar/" target="_blank" rel="noopener">OHMC</a> (Observatorio Hidrometeorológico de Córdoba)</p>
         </div>
 
-        <!-- Trayectoria y ETA estimadas -->
         <div class="card">
             <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Radar real (RMA1)</span></h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
@@ -129,7 +119,6 @@
             <div id="trajectory-content">Calculando trayectoria...</div>
         </div>
 
-        <!-- Condiciones en Vivo -->
         <div class="card">
             <h3>Condiciones en Vivo — Córdoba Capital</h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;" id="data-source-note">Fuente: Open-Meteo (modelo meteorológico, dato real)</p>
@@ -149,7 +138,6 @@
             </div>
         </div>
 
-        <!-- Alertas -->
         <div class="card">
             <h3>Nivel de Alerta Estimado</h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
@@ -159,7 +147,6 @@
             <div id="smn-alerts">Cargando...</div>
         </div>
 
-        <!-- Índice de Riesgo de Granizo -->
         <div class="card">
             <h3>Índice de Riesgo de Granizo <span id="hail-mode-chip" class="chip" style="display:none;">Modo reducido</span></h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;" id="hail-index-desc">
@@ -176,7 +163,6 @@
             <ul id="hail-index-factors" style="font-size:0.8rem; color:#cbd5e1; margin: 10px 0 0 0; padding-left: 18px;"></ul>
         </div>
 
-        <!-- Feed real de X embebido directo -->
         <div class="card x-feed-card">
             <div class="x-feed-header">
                 <h3 style="margin: 0;">Reportes de @dimarcorafael</h3>
@@ -199,7 +185,6 @@
         <p style="text-align: center; font-size: 0.8rem; color: #64748b;" id="last-sync">Última sincronización: --</p>
     </div>
 
-    <!-- Script oficial de X para renderizar el widget de timeline -->
     <script async src="https://platform.x.com/widgets.js" charset="utf-8"></script>
 
     <script>
@@ -236,7 +221,7 @@
             b.style.background = color;
         }
 
-        // --- Lógica del Chat con el Agente Conversacional ---
+        // --- Chat con el Agente Climático (con reintento automático por si el servidor está despertando) ---
         async function enviarConsultaChat() {
             const input = document.getElementById('chat-input');
             const box = document.getElementById('chat-box');
@@ -248,18 +233,38 @@
             input.value = '';
             box.scrollTop = box.scrollHeight;
             
-            try {
-                const res = await fetch(BACKEND + "/api/chat", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ pregunta: pregunta })
-                });
-                const data = await res.json();
-                
-                const respuestaFormat = data.respuesta.replace(/\n/g, "<br>");
-                box.innerHTML += `<div style="color: #38bdf8; margin-bottom: 8px;">🤖 <strong>Bot:</strong><br>${respuestaFormat}</div>`;
-            } catch (e) {
-                box.innerHTML += `<div style="color: #ef4444; margin-bottom: 8px;">🤖 <strong>Bot:</strong> No pude responder en este momento. Intenta de nuevo.</div>`;
+            const tempId = "bot-loading-" + Date.now();
+            box.innerHTML += `<div id="${tempId}" style="color: #94a3b8; margin-bottom: 8px;">🤖 <strong>Bot:</strong> Pensando respuesta (despertando servidor si es necesario)...</div>`;
+            box.scrollTop = box.scrollHeight;
+
+            let resData = null;
+            let intentos = 3;
+
+            for (let i = 0; i < intentos; i++) {
+                try {
+                    const res = await fetch(BACKEND + "/api/chat", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ pregunta: pregunta })
+                    });
+                    if (res.ok) {
+                        resData = await res.json();
+                        break;
+                    }
+                } catch (e) {
+                    if (i < intentos - 1) {
+                        await new Promise(r => setTimeout(r, 3000));
+                    }
+                }
+            }
+
+            const loadingElem = document.getElementById(tempId);
+
+            if (resData && resData.respuesta) {
+                const respuestaFormat = resData.respuesta.replace(/\n/g, "<br>");
+                loadingElem.outerHTML = `<div style="color: #38bdf8; margin-bottom: 8px;">🤖 <strong>Bot:</strong><br>${respuestaFormat}</div>`;
+            } else {
+                loadingElem.outerHTML = `<div style="color: #ef4444; margin-bottom: 8px;">🤖 <strong>Bot:</strong> El servidor está iniciando. Por favor probá consultar de nuevo en unos segundos.</div>`;
             }
             box.scrollTop = box.scrollHeight;
         }

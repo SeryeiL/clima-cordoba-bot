@@ -46,17 +46,20 @@ WEATHER_CODE_MAP = {
 }
 HAIL_CODES = {96, 99}
 
-def evaluar_formacion_tormenta(forecast_timeline):
+def evaluar_formacion_tormenta(forecast_timeline, indice_granizo):
+    """Evalúa formación de tormenta de forma más estricta para evitar falsos positivos."""
     probs = [p.get("precip_probability") for p in (forecast_timeline or [])]
     probs = [p for p in probs if isinstance(p, (int, float))]
-    altas = [p for p in probs if p >= 60]
-    if len(altas) >= 2:
-        return True, f"El pronóstico indica {max(altas):.0f}% de probabilidad de precipitación sostenida."
+    altas = [p for p in probs if p >= 75]  # Subimos exigencia a 75%
+    
+    # Solo alerta por formación si hay alta probabilidad Y el agente detecta algo de inestabilidad (score >= 15)
+    if len(altas) >= 2 and indice_granizo.get("score", 0) >= 15:
+        return True, f"El pronóstico indica {max(altas):.0f}% de probabilidad de precipitación con inestabilidad atmosférica."
     return False, None
 
 
 def _armar_datos_con_agentes(meteo_data, now, current_time_str):
-    """El orquestador coordina la salida de los agentes evaluando variables avanzadas."""
+    """El orquestador coordina la salida de los agentes."""
     current = meteo_data["current"]
     code = current.get("weather_code", 0)
     condition_text = WEATHER_CODE_MAP.get(code, "Condición desconocida")
@@ -80,7 +83,7 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
     freezing_now = hourly_freezing[start_idx] if start_idx < len(hourly_freezing) else None
     wind_80_now = hourly_w80[start_idx] if start_idx < len(hourly_w80) else None
 
-    # 👉 Agente Termodinámico evaluando riesgo con CAPE, congelamiento y cizalladura
+    # Primero evaluamos el índice de granizo/inestabilidad
     indice_granizo = agente_granizo.evaluar_riesgo(
         cape_now, freezing_now, code, wind_gusts, wind_speed, wind_80_now
     )
@@ -93,7 +96,8 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
             "precip_probability": hourly_probs[h] if h < len(hourly_probs) else None
         })
 
-    storm_forming, storm_forming_detail = evaluar_formacion_tormenta(forecast_timeline)
+    # Evaluamos formación de tormenta pasando el índice calculado
+    storm_forming, storm_forming_detail = evaluar_formacion_tormenta(forecast_timeline, indice_granizo)
 
     if indice_granizo["nivel"] == "Alto":
         alert_level = "naranja"
@@ -120,7 +124,7 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
         },
         "hail_index": indice_granizo,
         "alert_level": alert_level,
-        "hail_possible": hail_possible or indice_granizo["score"] >= 25,
+        "hail_possible": hail_possible or indice_granizo["score"] >= 30, # Ajustado para evitar falsos positivos menores
         "storm_forming": storm_forming,
         "storm_forming_detail": storm_forming_detail,
         "forecast_timeline": forecast_timeline,

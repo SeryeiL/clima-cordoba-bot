@@ -21,8 +21,8 @@ class AgenteMeteorologo:
 
 
 class AgenteTermodinamicoGranizo:
-    """Agente 2 (Avanzado/Preventivo): Evalúa CAPE, congelamiento, códigos de tormenta y cizalladura del viento."""
-    def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh, wind_surface, wind_high):
+    """Agente 2: Evalúa CAPE, congelamiento, códigos de tormenta y cizalladura de forma segura."""
+    def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh=0, wind_surface=0, wind_high=0):
         score = 0
         detail = []
 
@@ -50,15 +50,18 @@ class AgenteTermodinamicoGranizo:
                 score += 15
                 detail.append(f"congelamiento favorable ({freezing_level_m:.0f} m)")
 
-        # 3. Cizalladura del viento (Diferencia de velocidad superficie vs altura)
-        if wind_surface is not None and wind_high is not None:
-            cizalladura = wind_high - wind_surface
-            if cizalladura >= 35:
-                score += 20
-                detail.append(f"cizalladura severa (+{cizalladura:.0f} km/h)")
-            elif cizalladura >= 20:
-                score += 10
-                detail.append(f"cizalladura moderada (+{cizalladura:.0f} km/h)")
+        # 3. Cizalladura del viento (Segura ante valores nulos)
+        try:
+            if wind_surface is not None and wind_high is not None:
+                cizalladura = float(wind_high) - float(wind_surface)
+                if cizalladura >= 35:
+                    score += 20
+                    detail.append(f"cizalladura severa (+{cizalladura:.0f} km/h)")
+                elif cizalladura >= 20:
+                    score += 10
+                    detail.append(f"cizalladura moderada (+{cizalladura:.0f} km/h)")
+        except Exception:
+            pass
 
         # 4. Códigos de clima y ráfagas
         HAIL_CODES = {96, 99}
@@ -171,7 +174,7 @@ class AgenteConversacional:
             return (
                 "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme:\n"
                 "• *¿Hay riesgo de granizo?*\n"
-                "• *¿Cuándo llega la tormenta a mi barrio?*\n"
+                "• *¿Cuándo llega la tormenta a tu barrio?*\n"
                 "• *¿Cuánta agua se espera que caiga?*\n"
                 "• *¿Cómo está la temperatura y el viento?*"
             )

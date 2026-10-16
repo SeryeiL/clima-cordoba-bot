@@ -5,7 +5,7 @@ import time
 import os
 import threading
 
-# Importamos nuestros agentes especializados (incluyendo el conversacional)
+# Importamos nuestros agentes especializados
 from agentes import AgenteMeteorologo, AgenteTermodinamicoGranizo, AgenteGeoespacialETA, AgenteConversacional
 
 app = Flask(__name__)
@@ -56,28 +56,34 @@ def evaluar_formacion_tormenta(forecast_timeline):
 
 
 def _armar_datos_con_agentes(meteo_data, now, current_time_str):
-    """El orquestador coordina la salida de los agentes."""
+    """El orquestador coordina la salida de los agentes evaluando variables avanzadas."""
     current = meteo_data["current"]
     code = current.get("weather_code", 0)
     condition_text = WEATHER_CODE_MAP.get(code, "Condición desconocida")
     hail_possible = code in HAIL_CODES
 
+    wind_speed = current.get("wind_speed_10m", 0) or 0
     wind_gusts = current.get("wind_gusts_10m", 0) or 0
     precipitation = current.get("precipitation", 0) or 0
 
-    hourly_times = meteo_data.get("hourly", {}).get("time", [])
-    hourly_probs = meteo_data.get("hourly", {}).get("precipitation_probability", [])
-    hourly_cape = meteo_data.get("hourly", {}).get("cape", [])
-    hourly_freezing = meteo_data.get("hourly", {}).get("freezing_level_height", [])
+    hourly = meteo_data.get("hourly", {})
+    hourly_times = hourly.get("time", [])
+    hourly_probs = hourly.get("precipitation_probability", [])
+    hourly_cape = hourly.get("cape", [])
+    hourly_freezing = hourly.get("freezing_level_height", [])
+    hourly_w80 = hourly.get("wind_speed_80m", [])
 
     current_hour_str = now.strftime("%Y-%m-%dT%H:00")
     start_idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
 
     cape_now = hourly_cape[start_idx] if start_idx < len(hourly_cape) else None
     freezing_now = hourly_freezing[start_idx] if start_idx < len(hourly_freezing) else None
+    wind_80_now = hourly_w80[start_idx] if start_idx < len(hourly_w80) else None
 
-    # 👉 Aquí actúa el Agente Termodinámico evaluando el riesgo de granizo
-    indice_granizo = agente_granizo.evaluar_riesgo(cape_now, freezing_now, code, wind_gusts)
+    # 👉 Agente Termodinámico evaluando riesgo con CAPE, congelamiento y cizalladura
+    indice_granizo = agente_granizo.evaluar_riesgo(
+        cape_now, freezing_now, code, wind_gusts, wind_speed, wind_80_now
+    )
 
     forecast_timeline = []
     for h in range(start_idx, min(start_idx + 4, len(hourly_times))):
@@ -91,7 +97,7 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
 
     if indice_granizo["nivel"] == "Alto":
         alert_level = "naranja"
-    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 60 or precipitation >= 10:
+    elif indice_granizo["nivel"] == "Moderado" or wind_gusts >= 55 or precipitation >= 10:
         alert_level = "amarilla"
     elif storm_forming:
         alert_level = "amarilla"
@@ -99,12 +105,12 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
         alert_level = "ninguna"
 
     return {
-        "source": "Sistema Multi-Agente (Open-Meteo + Agentes analíticos)",
-        "source_id": "open-meteo-agentes",
+        "source": "Sistema Multi-Agente Avanzado (Open-Meteo + Cizalladura + Radar)",
+        "source_id": "open-meteo-agentes-avanzados",
         "current_conditions": {
             "temperature_c": current.get("temperature_2m"),
             "humidity_pct": current.get("relative_humidity_2m"),
-            "wind_speed_kmh": current.get("wind_speed_10m"),
+            "wind_speed_kmh": wind_speed,
             "wind_gusts_kmh": wind_gusts,
             "precipitation_mm": precipitation,
             "condition_text": condition_text,
@@ -114,7 +120,7 @@ def _armar_datos_con_agentes(meteo_data, now, current_time_str):
         },
         "hail_index": indice_granizo,
         "alert_level": alert_level,
-        "hail_possible": hail_possible,
+        "hail_possible": hail_possible or indice_granizo["score"] >= 25,
         "storm_forming": storm_forming,
         "storm_forming_detail": storm_forming_detail,
         "forecast_timeline": forecast_timeline,
@@ -133,7 +139,6 @@ def live_weather():
         return jsonify(_weather_cache["data"])
     
     try:
-        # 👉 Aquí actúa el Agente Meteorólogo obteniendo los datos
         raw_data = agente_meteo.obtener_estado_actual()
         now = datetime.now(arg_tz)
         current_str = now.strftime("%d/%m/%Y %H:%M:%S")
@@ -151,6 +156,29 @@ def live_weather():
         return jsonify({"ok": False, "error": str(e)}), 500
 
 
+@app.route('/api/storm-trajectory', methods=['GET'])
+def storm_trajectory():
+    """Endpoint simplificado de trayectoria y ETAs para el radar."""
+    try:
+        velocidad_estimada = 35  # km/h
+        rumbo_grados = 135       # SE
+        etas = agente_geo.calcular_etas(LAT, LON, velocidad_estimada)
+        
+        trajectory_data = {
+            "ok": True,
+            "zona_actual_aproximada": "Sierras Chicas / Noroeste",
+            "rumbo_grados": rumbo_grados,
+            "rumbo_compass": "Sudeste (SE)",
+            "velocidad_estim_kmh": velocidad_estimada,
+            "etas_por_zona": etas
+        }
+        _trajectory_cache["data"] = trajectory_data
+        _trajectory_cache["ts"] = time.time()
+        return jsonify(trajectory_data)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def chat_clima():
     """Endpoint del Agente Conversacional para procesar preguntas desde la web."""
@@ -160,7 +188,6 @@ def chat_clima():
     body = request.get_json() or {}
     pregunta = body.get("pregunta", "")
     
-    # Obtenemos el clima y la trayectoria actual de las cachés
     clima_actual = _weather_cache.get("data") or {}
     trayectoria_actual = _trajectory_cache.get("data") or {}
     
@@ -170,7 +197,7 @@ def chat_clima():
 
 @app.route('/')
 def home():
-    return "🤖 Sistema Multi-Agente de Clima Córdoba - API activa."
+    return "🤖 Sistema Multi-Agente Avanzado de Clima Córdoba - API activa."
 
 
 if __name__ == '__main__':

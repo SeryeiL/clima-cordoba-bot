@@ -153,3 +153,19 @@ def home():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
+from agentes import AgenteConversacional  # Asegúrate de importar el nuevo agente
+
+agente_chat = AgenteConversacional()
+
+@app.route('/api/chat', methods=['POST'])
+def chat_clima():
+    body = request.get_json() or {}
+    pregunta = body.get("pregunta", "")
+    
+    # Obtenemos el clima y la trayectoria actual para responder con datos frescos
+    clima_actual = _weather_cache.get("data") or {}
+    trayectoria_actual = _trajectory_cache.get("data") or {}
+    
+    respuesta = agente_chat.responder_consulta(pregunta, clima_actual, trayectoria_actual)
+    return jsonify({"respuesta": respuesta})

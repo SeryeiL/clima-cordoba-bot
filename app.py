@@ -6,7 +6,13 @@ import os
 import threading
 
 # Importamos nuestros agentes especializados
-from agentes import AgenteMeteorologo, AgenteTermodinamicoGranizo, AgenteGeoespacialETA, AgenteConversacional
+from agentes import (
+    AgenteMeteorologo,
+    AgenteMeteorologoRespaldo,
+    AgenteTermodinamicoGranizo,
+    AgenteGeoespacialETA,
+    AgenteConversacional,
+)
 
 app = Flask(__name__)
 CORS(app)
@@ -17,6 +23,7 @@ LON = -64.1888
 
 # Instanciamos los agentes con sus configuraciones base
 agente_meteo = AgenteMeteorologo(LAT, LON)
+agente_meteo_respaldo = AgenteMeteorologoRespaldo(LAT, LON)
 agente_granizo = AgenteTermodinamicoGranizo()
 agente_chat = AgenteConversacional()
 

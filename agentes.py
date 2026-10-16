@@ -2,7 +2,7 @@ import math
 import requests
 
 class AgenteMeteorologo:
-    """Agente 1: Recopila los datos del clima en tiempo real desde Open-Meteo."""
+    """Agente 1: Recopila datos del clima y vientos en altura desde Open-Meteo."""
     def __init__(self, lat, lon):
         self.lat = lat
         self.lon = lon
@@ -12,7 +12,7 @@ class AgenteMeteorologo:
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={self.lat}&longitude={self.lon}"
             "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,weather_code"
-            "&hourly=precipitation_probability,cape,freezing_level_height"
+            "&hourly=precipitation_probability,cape,freezing_level_height,wind_speed_10m,wind_speed_80m"
             "&timezone=America%2FArgentina%2FCordoba&forecast_days=1"
         )
         resp = requests.get(url, timeout=8)
@@ -21,55 +21,63 @@ class AgenteMeteorologo:
 
 
 class AgenteTermodinamicoGranizo:
-    """Agente 2 (Sensible/Preventivo): Analiza la severidad y el potencial de granizo 
-    con umbrales más bajos para garantizar una alerta temprana."""
-    def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh):
+    """Agente 2 (Avanzado/Preventivo): Evalúa CAPE, congelamiento, códigos de tormenta y cizalladura del viento."""
+    def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh, wind_surface, wind_high):
         score = 0
         detail = []
 
+        # 1. CAPE (Energía Convectiva)
         if cape is not None:
             if cape >= 3000:
-                score += 45
-                detail.append(f"CAPE muy alto ({cape:.0f} J/kg)")
+                score += 40
+                detail.append(f"CAPE extremo ({cape:.0f} J/kg)")
             elif cape >= 1800:
-                score += 35
+                score += 30
                 detail.append(f"CAPE alto ({cape:.0f} J/kg)")
             elif cape >= 800:
-                score += 20
+                score += 15
                 detail.append(f"CAPE moderado ({cape:.0f} J/kg)")
             elif cape >= 300:
-                score += 10
-                detail.append(f"CAPE bajo / inestabilidad inicial ({cape:.0f} J/kg)")
+                score += 8
+                detail.append(f"inestabilidad inicial ({cape:.0f} J/kg)")
 
+        # 2. Altura de congelamiento
         if freezing_level_m is not None:
-            if freezing_level_m <= 3200:
+            if freezing_level_m <= 3000:
                 score += 25
-                detail.append(f"nivel de congelamiento bajo ({freezing_level_m:.0f} m)")
-            elif freezing_level_m <= 4200:
+                detail.append(f"congelamiento muy bajo ({freezing_level_m:.0f} m)")
+            elif freezing_level_m <= 3800:
                 score += 15
-                detail.append(f"nivel de congelamiento moderado ({freezing_level_m:.0f} m)")
+                detail.append(f"congelamiento favorable ({freezing_level_m:.0f} m)")
 
+        # 3. Cizalladura del viento (Diferencia de velocidad superficie vs altura)
+        if wind_surface is not None and wind_high is not None:
+            cizalladura = wind_high - wind_surface
+            if cizalladura >= 35:
+                score += 20
+                detail.append(f"cizalladura severa (+{cizalladura:.0f} km/h)")
+            elif cizalladura >= 20:
+                score += 10
+                detail.append(f"cizalladura moderada (+{cizalladura:.0f} km/h)")
+
+        # 4. Códigos de clima y ráfagas
         HAIL_CODES = {96, 99}
         if weather_code in HAIL_CODES:
-            score += 30
-            detail.append("modelo indica tormenta con granizo")
+            score += 25
+            detail.append("modelo detecta tormenta severa")
         elif weather_code == 95:
-            score += 15
-            detail.append("modelo indica tormenta eléctrica")
+            score += 12
+            detail.append("modelo detecta tormenta eléctrica")
 
-        if wind_gusts_kmh is not None:
-            if wind_gusts_kmh >= 65:
-                score += 15
-                detail.append(f"ráfagas fuertes ({wind_gusts_kmh:.0f} km/h)")
-            elif wind_gusts_kmh >= 45:
-                score += 8
-                detail.append(f"ráfagas moderadas ({wind_gusts_kmh:.0f} km/h)")
+        if wind_gusts_kmh is not None and wind_gusts_kmh >= 50:
+            score += 10
+            detail.append(f"ráfagas fuertes ({wind_gusts_kmh:.0f} km/h)")
 
         score = min(score, 100)
         
         if score >= 50:
             nivel = "Alto"
-        elif score >= 28:
+        elif score >= 25:
             nivel = "Moderado"
         elif score >= 12:
             nivel = "Bajo"
@@ -80,7 +88,7 @@ class AgenteTermodinamicoGranizo:
 
 
 class AgenteGeoespacialETA:
-    """Agente 3: Calcula distancias geográficas y Tiempos Estimados de Llegada (ETA) por zonas y barrios."""
+    """Agente 3: Calcula distancias geográficas y Tiempos Estimados de Llegada (ETA) por zonas."""
     def __init__(self, destinos):
         self.destinos = destinos
 
@@ -109,9 +117,7 @@ class AgenteGeoespacialETA:
 
 
 class AgenteConversacional:
-    """Agente 4: Responde preguntas frecuentes de los usuarios en lenguaje natural 
-    utilizando la información acumulada de los otros agentes."""
-    
+    """Agente 4: Responde consultas del usuario utilizando la información de los demás agentes."""
     def responder_consulta(self, pregunta, datos_clima, datos_trayectoria):
         pregunta = pregunta.lower().strip()
         
@@ -124,14 +130,13 @@ class AgenteConversacional:
             return (
                 f"🧊 **Riesgo de Granizo:** Actualmente el nivel es **{nivel}** ({score}/100).\n"
                 f"**Factores analizados:** {factores}.\n"
-                f"*(Recordá que es una estimación del modelo, chequeá siempre el radar en vivo)*."
+                f"*(Recordá que es una estimación analítica, chequeá siempre el radar en vivo)*."
             )
 
         elif any(w in pregunta for w in ["lluvia", "agua", "cuanto va a llover", "precipitacion", "tormenta"]):
             cond = datos_clima.get("current_conditions", {})
             precip = cond.get("precipitation_mm", 0)
             timeline = datos_clima.get("forecast_timeline", [])
-            
             prob_max = max([p.get("precip_probability", 0) for p in timeline], default=0) if timeline else 0
             
             res = f"🌧️ **Precipitación actual:** {precip} mm.\n"
@@ -139,7 +144,6 @@ class AgenteConversacional:
                 res += f"**Probabilidad máxima para las próximas horas:** {prob_max}%.\n"
             else:
                 res += "**Pronóstico corto plazo:** Sin probabilidad significativa de lluvia por ahora.\n"
-            
             return res
 
         elif any(w in pregunta for w in ["cuando llega", "eta", "barrio", "llegada", "zona", "centro", "cerro", "arguello"]):
@@ -154,7 +158,6 @@ class AgenteConversacional:
             for z in etas:
                 eta_txt = f"~{z['eta_minutos']} min" if z.get("eta_minutos") is not None else "sin tiempo estimado"
                 res += f"• **{z['zona']}:** {eta_txt} ({z['distancia_km']} km)\n"
-            
             return res
 
         elif any(w in pregunta for w in ["temperatura", "calor", "frio", "viento", "rafagas"]):
@@ -162,12 +165,11 @@ class AgenteConversacional:
             temp = cond.get("temperature_c", "--")
             viento = cond.get("wind_speed_kmh", "--")
             rafagas = cond.get("wind_gusts_kmh", "--")
-            
             return f"🌡️ **Temperatura actual:** {temp}°C.\n💨 **Viento:** {viento} km/h (Ráfagas de hasta {rafagas} km/h)."
 
         else:
             return (
-                "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme cosas como:\n"
+                "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme:\n"
                 "• *¿Hay riesgo de granizo?*\n"
                 "• *¿Cuándo llega la tormenta a mi barrio?*\n"
                 "• *¿Cuánta agua se espera que caiga?*\n"

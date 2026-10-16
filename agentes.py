@@ -20,6 +20,98 @@ class AgenteMeteorologo:
         return resp.json()
 
 
+class AgenteMeteorologoRespaldo:
+    """Agente 1b: Fuente de respaldo (MET Norway) cuando Open-Meteo no responde.
+
+    No trae CAPE ni altura de congelamiento, así que el índice de granizo
+    calculado a partir de estos datos queda en "modo reducido" (menos preciso).
+    """
+
+    # MET Norway pide identificar la app con contacto en el User-Agent (su ToS lo exige).
+    # Reemplazá el contacto por uno real tuyo si vas a usar esto en producción.
+    USER_AGENT = "ClimaCordobaBot/1.0 github.com/tu-usuario/clima-cordoba-bot"
+
+    SYMBOL_MAP = {
+        "clearsky": "Despejado",
+        "fair": "Mayormente despejado",
+        "partlycloudy": "Parcialmente nublado",
+        "cloudy": "Nublado",
+        "fog": "Niebla",
+        "lightrain": "Llovizna",
+        "rain": "Lluvia",
+        "heavyrain": "Lluvia intensa",
+        "lightrainshowers": "Chubascos débiles",
+        "rainshowers": "Chubascos",
+        "heavyrainshowers": "Chubascos intensos",
+        "lightrainandthunder": "Llovizna con tormenta",
+        "rainandthunder": "Lluvia con tormenta",
+        "heavyrainandthunder": "Tormenta fuerte",
+        "rainshowersandthunder": "Chubascos con tormenta",
+        "heavyrainshowersandthunder": "Chubascos intensos con tormenta",
+        "thunder": "Tormenta eléctrica",
+        "sleet": "Aguanieve",
+        "snow": "Nieve",
+    }
+
+    def __init__(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
+
+    def obtener_estado_actual(self):
+        url = (
+            "https://api.met.no/weatherapi/locationforecast/2.0/compact"
+            f"?lat={self.lat}&lon={self.lon}"
+        )
+        headers = {"User-Agent": self.USER_AGENT}
+        resp = requests.get(url, headers=headers, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+
+        timeseries = data.get("properties", {}).get("timeseries", [])
+        if not timeseries:
+            raise ValueError("MET Norway no devolvió datos de pronóstico")
+
+        ahora = timeseries[0]
+        instant = ahora.get("data", {}).get("instant", {}).get("details", {})
+        next1 = ahora.get("data", {}).get("next_1_hours", {})
+        symbol_code = (next1.get("summary", {}) or {}).get("symbol_code", "")
+        precip_next1 = (next1.get("details", {}) or {}).get("precipitation_amount", 0) or 0
+
+        current = {
+            "temperature_2m": instant.get("air_temperature"),
+            "relative_humidity_2m": instant.get("relative_humidity"),
+            "precipitation": precip_next1,
+            "wind_speed_10m": instant.get("wind_speed"),
+            # El producto "compact" de MET Norway no trae ráfagas; queda sin dato.
+            "wind_gusts_10m": instant.get("wind_speed_of_gust"),
+            "symbol_code": symbol_code,
+        }
+
+        forecast_timeline = []
+        for entry in timeseries[:5]:
+            t = entry.get("time", "")
+            hour_label = t.split("T")[1][:5] if "T" in t else "--"
+            n1 = entry.get("data", {}).get("next_1_hours", {})
+            precip = (n1.get("details", {}) or {}).get("precipitation_amount", 0) or 0
+            # MET Norway no da probabilidad; aproximamos con un valor fijo
+            # cuando hay precipitación esperada, para no inventar precisión falsa.
+            prob = 70 if precip > 0 else 0
+            forecast_timeline.append({"hour": hour_label, "precip_probability": prob})
+
+        return {
+            "current": current,
+            "forecast_timeline": forecast_timeline,
+            "symbol_code": symbol_code,
+        }
+
+    def condicion_texto(self, symbol_code):
+        base = (symbol_code or "").split("_")[0]  # saca sufijos tipo "_day" / "_night"
+        return self.SYMBOL_MAP.get(base, "Condición desconocida (respaldo)")
+
+    def hay_tormenta(self, symbol_code):
+        return "thunder" in (symbol_code or "")
+
+
 class AgenteTermodinamicoGranizo:
     """Agente 2: Evalúa CAPE, congelamiento, códigos de tormenta y cizalladura de forma segura."""
     def evaluar_riesgo(self, cape, freezing_level_m, weather_code, wind_gusts_kmh=0, wind_surface=0, wind_high=0):

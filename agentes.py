@@ -110,3 +110,74 @@ class AgenteGeoespacialETA:
                 "eta_minutos": eta_min
             })
         return etas
+
+class AgenteConversacional:
+    """Agente 4: Responde preguntas frecuentes de los usuarios en lenguaje natural 
+    utilizando la información acumulada de los otros agentes."""
+    
+    def responder_consulta(self, pregunta, datos_clima, datos_trayectoria):
+        pregunta = pregunta.lower().strip()
+        
+        # 1. Consultas sobre Granizo
+        if any(w in pregunta for w in ["granizo", "piedra", "manga"]):
+            idx = datos_clima.get("hail_index", {})
+            nivel = idx.get("nivel", "Desconocido")
+            score = idx.get("score", 0)
+            factores = ", ".join(idx.get("factores", [])) or "sin factores de riesgo detectados"
+            
+            return (
+                f"🧊 **Riesgo de Granizo:** Actualmente el nivel es **{nivel}** ({score}/100).\n"
+                f"**Factores analizados:** {factores}.\n"
+                f"*(Recordá que es una estimación del modelo, chequeá siempre el radar en vivo)*."
+            )
+
+        # 2. Consultas sobre Lluvia / Caída de agua / Precipitación
+        elif any(w in pregunta for w in ["lluvia", "agua", "cuanto va a llover", "precipitacion", "tormenta"]):
+            cond = datos_clima.get("current_conditions", {})
+            precip = cond.get("precipitation_mm", 0)
+            timeline = datos_clima.get("forecast_timeline", [])
+            
+            prob_max = max([p.get("precip_probability", 0) for p in timeline], default=0) if timeline else 0
+            
+            res = f"🌧️ **Precipitación actual:** {precip} mm.\n"
+            if prob_max > 0:
+                res += f"**Probabilidad máxima para las próximas horas:** {prob_max}%.\n"
+            else:
+                res += "**Pronóstico corto plazo:** Sin probabilidad significativa de lluvia por ahora.\n"
+            
+            return res
+
+        # 3. Consultas sobre Llegada / ETA / Barrios
+        elif any(w in pregunta for w in ["cuando llega", "eta", "barrio", "llegada", "zona", "centro", "cerro", "arguello"]):
+            if not datos_trayectoria or not datos_trayectoria.get("ok"):
+                return "📡 En este momento el radar no detecta una tormenta activa en camino a la Capital."
+            
+            etas = datos_trayectoria.get("etas_por_zona", [])
+            velocidad = datos_trayectoria.get("velocidad_estim_kmh", 0)
+            rumbo = datos_trayectoria.get("rumbo_compass", "--")
+            
+            res = f"🛰️ **Trayectoria de tormenta (Avance a {velocidad} km/h hacia el {rumbo}):**\n"
+            for z in etas:
+                eta_txt = f"~{z['eta_minutos']} min" if z.get("eta_minutos") is not None else "sin tiempo estimado"
+                res += f"• **{z['zona']}:** {eta_txt} ({z['distancia_km']} km)\n"
+            
+            return res
+
+        # 4. Consultas sobre Temperatura y Viento
+        elif any(w in pregunta for w in ["temperatura", "calor", "frio", "viento", "rafagas"]):
+            cond = datos_clima.get("current_conditions", {})
+            temp = cond.get("temperature_c", "--")
+            viento = cond.get("wind_speed_kmh", "--")
+            rafagas = cond.get("wind_gusts_kmh", "--")
+            
+            return f"🌡️ **Temperatura actual:** {temp}°C.\n💨 **Viento:** {viento} km/h (Ráfagas de hasta {rafagas} km/h)."
+
+        # 5. Respuesta por defecto
+        else:
+            return (
+                "🤖 Soy tu asistente de Clima Córdoba. Podés preguntarme cosas como:\n"
+                "• *¿Hay riesgo de granizo?*\n"
+                "• *¿Cuándo llega la tormenta a mi barrio?*\n"
+                "• *¿Cuánta agua se espera que caiga?*\n"
+                "• *¿Cómo está la temperatura y el viento?*"
+            )

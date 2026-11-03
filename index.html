@@ -110,10 +110,10 @@
         </div>
 
         <div class="card">
-            <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Radar real (RMA1)</span></h3>
+            <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Viento en altura</span></h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
-                Calculado comparando los últimos ~35 min del radar real de Córdoba (RMA1, vía OHMC) —
-                es una <strong>estimación propia</strong> (nowcasting lineal), se degrada más allá de ~60 min,
+                Calculado a partir de la dirección y velocidad del viento en altura del pronóstico
+                (no es un seguimiento de radar en tiempo real) — es una <strong>estimación propia</strong>,
                 y los puntos de zona/ETA son aproximados, no límites barriales oficiales.
             </p>
             <div id="trajectory-content">Calculando trayectoria...</div>
@@ -296,8 +296,14 @@
                         </div>`;
                 });
 
-                const notaEstacionaria = t.nota_estacionaria
-                    ? `<p style="color:#eab308; font-size:0.78rem; margin-top:8px;">${t.nota_estacionaria}</p>` : "";
+                const sinActividad = t.hay_actividad_detectada === false
+                    ? `<p style="color:#94a3b8; font-size:0.78rem; margin-top:8px;">ℹ️ No hay precipitación significativa detectada ahora mismo; estos valores reflejan solo el viento en altura, no una tormenta en curso.</p>` : "";
+
+                const nota = (!sinActividad && t.nota)
+                    ? `<p style="color:#64748b; font-size:0.72rem; margin-top:8px;">${t.nota}</p>` : "";
+
+                const fuenteChip = t.degraded
+                    ? `<p style="color:#bae6fd; font-size:0.72rem; margin-top:4px;">Fuente de respaldo: ${t.fuente || "MET Norway"}</p>` : "";
 
                 box.innerHTML = `
                     <div class="grid">
@@ -309,7 +315,7 @@
                         <span style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">ETA estimado por zona de Capital</span>
                         ${filasZonas}
                     </div>
-                    ${notaEstacionaria}`;
+                    ${sinActividad}${nota}${fuenteChip}`;
             } catch (e) {
                 box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">No se pudo conectar para calcular la trayectoria.</p>`;
             }

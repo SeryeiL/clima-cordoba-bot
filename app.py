@@ -13,6 +13,7 @@ from agentes import (
     AgenteTermodinamicoGranizo,
     AgenteGeoespacialETA,
     AgenteConversacional,
+    compass_es,
 )
 
 app = Flask(__name__)
@@ -42,8 +43,17 @@ _weather_cache = {"data": None, "ts": 0, "ok": None}
 _trajectory_cache = {"data": None, "ts": 0, "ok": None}
 _weather_last_good = {"data": None, "ts": 0}
 CACHE_TTL_WEATHER_OK = 180
+CACHE_TTL_TRAJECTORY = 300  # 5 min, coincide con el polling del frontend
 _refresh_lock = threading.Lock()
 _started_ts = time.time()
+
+# Los sistemas convectivos suelen moverse más lento que el viento "de
+# dirección" (steering) que los arrastra; 0.75 es un factor de reducción
+# estándar usado en nowcasting simple para aproximar la velocidad real.
+FACTOR_VELOCIDAD_TORMENTA = 0.75
+# Umbral de probabilidad de precipitación para considerar que hay señal
+# real de tormenta y no solo viento de rutina.
+UMBRAL_PRECIP_ACTIVIDAD = 30
 
 # Cuando Open-Meteo nos frena con 429, dejamos de insistirle por un rato en
 # vez de volver a pegarle en cada pedido (eso solo prolonga el bloqueo).
@@ -281,27 +291,123 @@ def live_weather():
     return jsonify(resultado)
 
 
+def _extraer_viento_altura_openmeteo(raw_data, now):
+    """Saca dirección/velocidad de viento en altura del pronóstico de Open-Meteo.
+
+    Preferimos 120m (más representativo del viento que arrastra un sistema
+    convectivo) y vamos cayendo a niveles más bajos si falta el dato.
+    """
+    hourly = raw_data.get("hourly", {})
+    hourly_times = hourly.get("time", [])
+    current_hour_str = now.strftime("%Y-%m-%dT%H:00")
+    idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
+
+    for nivel in ("120m", "80m", "10m"):
+        speeds = hourly.get(f"wind_speed_{nivel}", [])
+        dirs = hourly.get(f"wind_direction_{nivel}", [])
+        if idx < len(speeds) and idx < len(dirs) and speeds[idx] is not None and dirs[idx] is not None:
+            return speeds[idx], dirs[idx], nivel
+
+    return None, None, None
+
+
+def _hay_actividad_de_tormenta(raw_data, now):
+    """Determina si hay señal real de precipitación, para no mostrar una
+    trayectoria como si hubiera una tormenta activa cuando está despejado."""
+    current = raw_data.get("current", {})
+    code = current.get("weather_code", 0)
+    if code in HAIL_CODES or code == 95:
+        return True
+
+    hourly = raw_data.get("hourly", {})
+    hourly_times = hourly.get("time", [])
+    hourly_probs = hourly.get("precipitation_probability", [])
+    current_hour_str = now.strftime("%Y-%m-%dT%H:00")
+    idx = hourly_times.index(current_hour_str) if current_hour_str in hourly_times else 0
+
+    for h in range(idx, min(idx + 4, len(hourly_probs))):
+        if (hourly_probs[h] or 0) >= UMBRAL_PRECIP_ACTIVIDAD:
+            return True
+    return False
+
+
+def _armar_trayectoria(velocidad_viento_kmh, direccion_viento_deg, fuente, degraded, hay_actividad):
+    # El viento "de dirección" sopla DESDE esa dirección; lo que arrastra
+    # (el sistema convectivo) se mueve HACIA el lado opuesto.
+    rumbo_movimiento = (direccion_viento_deg + 180) % 360
+    velocidad_estimada = round(velocidad_viento_kmh * FACTOR_VELOCIDAD_TORMENTA, 1)
+
+    abrev, nombre = compass_es(rumbo_movimiento)
+    origen_abrev, origen_nombre = compass_es(direccion_viento_deg)
+
+    etas = agente_geo.calcular_etas(LAT, LON, velocidad_estimada if velocidad_estimada >= 2 else 0)
+
+    return {
+        "ok": True,
+        "hay_actividad_detectada": hay_actividad,
+        "zona_actual_aproximada": f"Sector {origen_nombre} ({origen_abrev}), según viento en altura",
+        "rumbo_grados": round(rumbo_movimiento),
+        "rumbo_compass": f"{nombre} ({abrev})",
+        "velocidad_estim_kmh": velocidad_estimada,
+        "fuente": fuente,
+        "degraded": degraded,
+        "etas_por_zona": etas,
+        "nota": (
+            "Dirección y velocidad estimadas a partir del viento en altura del "
+            "pronóstico, no de un seguimiento de radar en tiempo real."
+            if hay_actividad else
+            "No se detecta precipitación significativa en este momento; esta es "
+            "la dirección del viento en altura, no la trayectoria de una tormenta activa."
+        ),
+    }
+
+
 @app.route('/api/storm-trajectory', methods=['GET'])
 def storm_trajectory():
-    """Endpoint simplificado de trayectoria y ETAs para el radar."""
+    """Deriva una trayectoria aproximada a partir del viento en altura del
+    pronóstico (dirección + velocidad), con el mismo esquema de respaldo que
+    /api/live-weather: Open-Meteo primero, MET Norway si falla."""
+    now_ts = time.time()
+    if _trajectory_cache["data"] is not None and (now_ts - _trajectory_cache["ts"]) < CACHE_TTL_TRAJECTORY:
+        return jsonify(_trajectory_cache["data"])
+
+    now = datetime.now(arg_tz)
+    error_primario = None
+
     try:
-        velocidad_estimada = 35  # km/h
-        rumbo_grados = 135       # SE
-        etas = agente_geo.calcular_etas(LAT, LON, velocidad_estimada)
-        
-        trajectory_data = {
-            "ok": True,
-            "zona_actual_aproximada": "Sierras Chicas / Noroeste",
-            "rumbo_grados": rumbo_grados,
-            "rumbo_compass": "Sudeste (SE)",
-            "velocidad_estim_kmh": velocidad_estimada,
-            "etas_por_zona": etas
-        }
+        raw_data = agente_meteo.obtener_estado_actual()
+        velocidad, direccion, nivel = _extraer_viento_altura_openmeteo(raw_data, now)
+        if velocidad is None:
+            raise ValueError("El pronóstico no trajo datos de viento en altura utilizables")
+        hay_actividad = _hay_actividad_de_tormenta(raw_data, now)
+        trajectory_data = _armar_trayectoria(
+            velocidad, direccion, f"Open-Meteo (viento a {nivel})", False, hay_actividad
+        )
         _trajectory_cache["data"] = trajectory_data
-        _trajectory_cache["ts"] = time.time()
+        _trajectory_cache["ts"] = now_ts
         return jsonify(trajectory_data)
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+    except Exception as e_primario:
+        error_primario = e_primario
+
+    try:
+        raw_backup = agente_meteo_respaldo.obtener_estado_actual()
+        current = raw_backup.get("current", {})
+        velocidad = current.get("wind_speed_10m")
+        direccion = current.get("wind_direction_10m")
+        if velocidad is None or direccion is None:
+            raise ValueError("MET Norway no trajo dirección/velocidad de viento utilizable")
+        hay_actividad = agente_meteo_respaldo.hay_tormenta(current.get("symbol_code", ""))
+        trajectory_data = _armar_trayectoria(
+            velocidad, direccion, "MET Norway (respaldo, viento a 10m)", True, hay_actividad
+        )
+        _trajectory_cache["data"] = trajectory_data
+        _trajectory_cache["ts"] = now_ts
+        return jsonify(trajectory_data)
+    except Exception as e_respaldo:
+        return jsonify({
+            "ok": False,
+            "error": f"Open-Meteo: {error_primario} | MET Norway: {e_respaldo}",
+        }), 500
 
 
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])

@@ -1,6 +1,26 @@
 import math
 import requests
 
+# Los 16 puntos de la rosa de los vientos, en español, con su abreviatura.
+_PUNTOS_COMPASS = [
+    ("N", "Norte"), ("NNE", "Nor-noreste"), ("NE", "Noreste"), ("ENE", "Es-noreste"),
+    ("E", "Este"), ("ESE", "Es-sudeste"), ("SE", "Sudeste"), ("SSE", "Sud-sudeste"),
+    ("S", "Sur"), ("SSO", "Sud-sudoeste"), ("SO", "Sudoeste"), ("OSO", "Oes-sudoeste"),
+    ("O", "Oeste"), ("ONO", "Oes-noroeste"), ("NO", "Noroeste"), ("NNO", "Nor-noroeste"),
+]
+
+
+def compass_es(grados):
+    """Convierte grados (0-360) al punto cardinal más cercano, en español.
+
+    Devuelve una tupla (abreviatura, nombre_completo), ej: ("SE", "Sudeste").
+    """
+    if grados is None:
+        return None, None
+    idx = round((grados % 360) / 22.5) % 16
+    return _PUNTOS_COMPASS[idx]
+
+
 class AgenteMeteorologo:
     """Agente 1: Recopila datos del clima y vientos en altura desde Open-Meteo."""
 
@@ -17,7 +37,9 @@ class AgenteMeteorologo:
             "https://api.open-meteo.com/v1/forecast"
             f"?latitude={self.lat}&longitude={self.lon}"
             "&current=temperature_2m,relative_humidity_2m,precipitation,wind_speed_10m,wind_gusts_10m,weather_code"
-            "&hourly=precipitation_probability,cape,freezing_level_height,wind_speed_10m,wind_speed_80m"
+            "&hourly=precipitation_probability,cape,freezing_level_height,"
+            "wind_speed_10m,wind_direction_10m,wind_speed_80m,wind_direction_80m,"
+            "wind_speed_120m,wind_direction_120m"
             "&timezone=America%2FArgentina%2FCordoba&forecast_days=1"
         )
         resp = requests.get(url, headers={"User-Agent": self.USER_AGENT}, timeout=8)
@@ -87,6 +109,8 @@ class AgenteMeteorologoRespaldo:
             "relative_humidity_2m": instant.get("relative_humidity"),
             "precipitation": precip_next1,
             "wind_speed_10m": instant.get("wind_speed"),
+            # "wind_from_direction": de dónde sopla el viento (convención meteorológica).
+            "wind_direction_10m": instant.get("wind_from_direction"),
             # El producto "compact" de MET Norway no trae ráfagas; queda sin dato.
             "wind_gusts_10m": instant.get("wind_speed_of_gust"),
             "symbol_code": symbol_code,

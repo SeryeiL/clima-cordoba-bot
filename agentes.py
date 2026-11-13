@@ -1,5 +1,9 @@
 import math
+from datetime import datetime, timezone
+from io import BytesIO
+
 import requests
+from PIL import Image
 
 # Los 16 puntos de la rosa de los vientos, en español, con su abreviatura.
 _PUNTOS_COMPASS = [
@@ -19,6 +23,172 @@ def compass_es(grados):
         return None, None
     idx = round((grados % 360) / 22.5) % 16
     return _PUNTOS_COMPASS[idx]
+
+
+class AgenteRadarOHMC:
+    """Agente 0: Trayectoria real a partir del radar RMA1 (vía OHMC).
+
+    Usa el endpoint interno que consume el propio visor web de OHMC
+    (webmet.ohmc.ar) para traer el producto COLMAX (máximo de reflectividad
+    en columna) del radar nacional RMA1 — el mismo que usa el SMN para
+    Córdoba.
+
+    OJO: es un endpoint NO documentado del visor de OHMC, no una API pública
+    pensada para terceros. Filtra por header Origin/Referer, no por API key,
+    así que lo imitamos. Puede cambiar o bloquearse sin aviso — por eso
+    quien llama a este agente SIEMPRE tiene que tener un plan B si falla.
+
+    Método: por cada frame (imagen RGBA georreferenciada por un bbox en
+    grados), calculamos el centroide ponderado por el canal alfa (ahí donde
+    el radar detecta reflectividad). Comparando el centroide entre el primer
+    y el último frame sacamos velocidad y rumbo real del sistema.
+    """
+
+    API_BASE = "https://webmet.ohmc.ar/api/v1"
+    HEADERS = {
+        "Origin": "https://webmet.ohmc.ar",
+        "Referer": "https://webmet.ohmc.ar/",
+        "User-Agent": "Mozilla/5.0 (compatible; ClimaCordobaPro/1.0; +https://github.com/SeryeiL/clima-cordoba-bot)",
+    }
+    RADAR_CODE = "RMA1"
+    PRODUCT_KEY = "COLMAX"
+    STRATEGY = "0315"
+    VOL_NR = ["01", "02"]
+    FRAMES_A_USAR = 4  # últimos 4 frames (~35-40 min, cada uno cada ~9-10 min)
+
+    def _listar_frames(self):
+        params = {
+            "radar_code": self.RADAR_CODE,
+            "product_key": self.PRODUCT_KEY,
+            "vol_nr": self.VOL_NR,
+            "strategy": self.STRATEGY,
+        }
+        resp = requests.get(f"{self.API_BASE}/cogs", params=params, headers=self.HEADERS, timeout=8)
+        resp.raise_for_status()
+        cogs = resp.json().get("cogs", [])
+        return sorted(cogs, key=lambda c: c["observation_time"])
+
+    def _descargar_imagen(self, frame_id):
+        url = f"{self.API_BASE}/frames/{frame_id}/image.png"
+        resp = requests.get(url, params={"colormap": "OHMC_dBZ"}, headers=self.HEADERS, timeout=10)
+        resp.raise_for_status()
+        return Image.open(BytesIO(resp.content)).convert("RGBA")
+
+    @staticmethod
+    def _centroide_precipitacion(img):
+        """Centroide ponderado por el canal alfa. El fondo (sin eco de
+        radar) viene con alpha=0; donde hay reflectividad, alpha>0."""
+        w, h = img.size
+        total_peso = 0.0
+        sum_x = 0.0
+        sum_y = 0.0
+        # getdata() es bastante más rápido que indexar pixel a pixel con load().
+        for i, (_, _, _, a) in enumerate(img.getdata()):
+            if a > 10:
+                x = i % w
+                y = i // w
+                total_peso += a
+                sum_x += x * a
+                sum_y += y * a
+        if total_peso == 0:
+            return None
+        return (sum_x / total_peso, sum_y / total_peso, total_peso)
+
+    @staticmethod
+    def _pixel_a_latlon(px, py, w, h, bbox):
+        """La imagen de OHMC es una proyección lineal simple sobre su bbox
+        (no es un tile Web Mercator), así que alcanza con interpolar
+        linealmente dentro de esos límites."""
+        lon = bbox["min_lon"] + (px / w) * (bbox["max_lon"] - bbox["min_lon"])
+        lat = bbox["max_lat"] - (py / h) * (bbox["max_lat"] - bbox["min_lat"])
+        return lat, lon
+
+    @staticmethod
+    def _haversine_km(lat1, lon1, lat2, lon2):
+        R = 6371.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    @staticmethod
+    def _bearing_deg(lat1, lon1, lat2, lon2):
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dlambda = math.radians(lon2 - lon1)
+        x = math.sin(dlambda) * math.cos(phi2)
+        y = math.cos(phi1) * math.sin(phi2) - math.sin(phi1) * math.cos(phi2) * math.cos(dlambda)
+        return (math.degrees(math.atan2(x, y)) + 360) % 360
+
+    def analizar_trayectoria(self):
+        """Devuelve un dict con la trayectoria real detectada, o lanza una
+        excepción si el endpoint de OHMC falla (quien llama debe atraparla
+        y caer a un método de respaldo)."""
+        frames = self._listar_frames()
+        if len(frames) < 2:
+            raise ValueError("No hay suficientes frames de radar disponibles todavía (OHMC).")
+
+        frames_a_usar = frames[-self.FRAMES_A_USAR:] if len(frames) >= self.FRAMES_A_USAR else frames
+
+        puntos = []
+        descargas_ok = 0
+        for f in frames_a_usar:
+            try:
+                img = self._descargar_imagen(f["id"])
+                descargas_ok += 1
+            except Exception:
+                continue
+            centroide = self._centroide_precipitacion(img)
+            if centroide is None:
+                continue
+            px, py, _peso = centroide
+            w, h = img.size
+            lat, lon = self._pixel_a_latlon(px, py, w, h, f["bbox"])
+            t = datetime.strptime(f["observation_time"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+            puntos.append({"time": t.timestamp(), "lat": lat, "lon": lon})
+
+        diagnostico = {
+            "frames_evaluados": len(frames_a_usar),
+            "frames_descargados_ok": descargas_ok,
+            "frames_con_senal_de_lluvia": len(puntos),
+        }
+
+        if len(puntos) < 2:
+            # No es un error del sistema: puede ser simplemente que no haya
+            # lluvia en el radar ahora mismo. Lo marcamos aparte para que
+            # quien llama decida si caer a otro método o mostrar "sin
+            # actividad", sin confundirlo con una falla real del servicio.
+            raise SinSenalDeRadar(
+                "No se detectó suficiente precipitación en el radar (RMA1/OHMC) "
+                "para calcular una trayectoria.",
+                diagnostico=diagnostico,
+            )
+
+        primero, ultimo = puntos[0], puntos[-1]
+        dt_min = (ultimo["time"] - primero["time"]) / 60.0
+        if dt_min <= 0:
+            raise ValueError("Los tiempos de los frames de radar son inconsistentes.")
+
+        dist_km = self._haversine_km(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
+        velocidad_kmh = (dist_km / dt_min) * 60
+        rumbo = self._bearing_deg(primero["lat"], primero["lon"], ultimo["lat"], ultimo["lon"])
+
+        return {
+            "lat_actual": ultimo["lat"],
+            "lon_actual": ultimo["lon"],
+            "velocidad_kmh": round(velocidad_kmh, 1),
+            "rumbo_grados": round(rumbo),
+            "frames_usados": len(puntos),
+            "diagnostico": diagnostico,
+        }
+
+
+class SinSenalDeRadar(Exception):
+    """El radar respondió bien, pero no hay precipitación detectable ahora."""
+
+    def __init__(self, mensaje, diagnostico=None):
+        super().__init__(mensaje)
+        self.diagnostico = diagnostico or {}
 
 
 class AgenteMeteorologo:

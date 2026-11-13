@@ -110,10 +110,11 @@
         </div>
 
         <div class="card">
-            <h3>Trayectoria Estimada <span class="chip" style="background:#334155;">Viento en altura</span></h3>
+            <h3>Trayectoria Estimada <span id="trajectory-source-chip" class="chip" style="background:#334155;">Calculando…</span></h3>
             <p style="font-size: 0.75rem; color: #64748b; margin-top: 0;">
-                Calculado a partir de la dirección y velocidad del viento en altura del pronóstico
-                (no es un seguimiento de radar en tiempo real) — es una <strong>estimación propia</strong>,
+                Cuando el radar de Córdoba (RMA1) detecta una tormenta real, se usa esa posición real.
+                Si no hay lluvia en el radar (o el servicio no responde), se estima la dirección a partir
+                del viento en altura del pronóstico — es una <strong>estimación propia</strong> en ambos casos,
                 y los puntos de zona/ETA son aproximados, no límites barriales oficiales.
             </p>
             <div id="trajectory-content">Calculando trayectoria...</div>
@@ -279,6 +280,9 @@
                 const t = await fetchJSON(TRAJECTORY_API_URL, 45000);
 
                 if (t.ok === false) {
+                    const chipErr = document.getElementById('trajectory-source-chip');
+                    chipErr.innerText = "Sin datos";
+                    chipErr.style.background = "#7f1d1d";
                     box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">${t.error || "No se pudo calcular la trayectoria en este momento."}${t.motivo_probable ? "<br><small>" + t.motivo_probable + "</small>" : ""}</p>`;
                     return;
                 }
@@ -302,8 +306,16 @@
                 const nota = (!sinActividad && t.nota)
                     ? `<p style="color:#64748b; font-size:0.72rem; margin-top:8px;">${t.nota}</p>` : "";
 
-                const fuenteChip = t.degraded
-                    ? `<p style="color:#bae6fd; font-size:0.72rem; margin-top:4px;">Fuente de respaldo: ${t.fuente || "MET Norway"}</p>` : "";
+                // Chip del título: distinto color según qué tan confiable es la fuente real usada.
+                const chip = document.getElementById('trajectory-source-chip');
+                const esRadarReal = (t.fuente || "").includes("Radar");
+                chip.innerText = esRadarReal ? "Radar real (RMA1)" : (t.degraded ? "Viento (respaldo)" : "Viento (estimado)");
+                chip.style.background = esRadarReal ? "#15803d" : (t.degraded ? "#b45309" : "#334155");
+
+                const fuenteTexto = t.fuente
+                    ? `<p style="color:#64748b; font-size:0.7rem; margin-top:4px;">Fuente: ${t.fuente}</p>` : "";
+                const radarInfo = t.radar_info
+                    ? `<p style="color:#64748b; font-size:0.7rem; margin-top:2px;">Radar: ${t.radar_info}</p>` : "";
 
                 box.innerHTML = `
                     <div class="grid">
@@ -315,7 +327,7 @@
                         <span style="font-size:0.7rem; color:#64748b; text-transform:uppercase;">ETA estimado por zona de Capital</span>
                         ${filasZonas}
                     </div>
-                    ${sinActividad}${nota}${fuenteChip}`;
+                    ${sinActividad}${nota}${fuenteTexto}${radarInfo}`;
             } catch (e) {
                 box.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem;">No se pudo conectar para calcular la trayectoria.</p>`;
             }

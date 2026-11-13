@@ -8,6 +8,8 @@ import requests as requests_lib
 
 # Importamos nuestros agentes especializados
 from agentes import (
+    AgenteRadarOHMC,
+    SinSenalDeRadar,
     AgenteMeteorologo,
     AgenteMeteorologoRespaldo,
     AgenteTermodinamicoGranizo,
@@ -24,6 +26,7 @@ LAT = -31.4201
 LON = -64.1888
 
 # Instanciamos los agentes con sus configuraciones base
+agente_radar = AgenteRadarOHMC()
 agente_meteo = AgenteMeteorologo(LAT, LON)
 agente_meteo_respaldo = AgenteMeteorologoRespaldo(LAT, LON)
 agente_granizo = AgenteTermodinamicoGranizo()
@@ -37,6 +40,23 @@ DESTINOS_CAPITAL = [
     ("Zona Este (Barrio Jardín / Gral. Paz)", -31.4075, -64.1578),
 ]
 agente_geo = AgenteGeoespacialETA(DESTINOS_CAPITAL)
+
+# Zonas de referencia regional (para decir "la tormenta está cerca de X"
+# cuando el radar la detecta realmente ahí). Son aproximaciones de centro
+# de localidad/región, no límites oficiales.
+ZONAS_REFERENCIA = [
+    ("Traslasierra", -31.72, -65.00),
+    ("Punilla (Carlos Paz / La Falda)", -31.33, -64.47),
+    ("Sierras Chicas", -31.28, -64.33),
+    ("Alta Gracia", -31.6539, -64.4282),
+    ("Calamuchita", -32.05, -64.50),
+    ("Córdoba Capital", LAT, LON),
+]
+
+
+def _zona_mas_cercana(lat, lon):
+    return min(ZONAS_REFERENCIA, key=lambda z: agente_geo._haversine_km(lat, lon, z[1], z[2]))[0]
+
 
 # Cachés simples en memoria
 _weather_cache = {"data": None, "ts": 0, "ok": None}
@@ -362,17 +382,73 @@ def _armar_trayectoria(velocidad_viento_kmh, direccion_viento_deg, fuente, degra
     }
 
 
+def _armar_trayectoria_radar(resultado_radar):
+    """Arma la respuesta cuando el radar RMA1 (OHMC) sí detectó una tormenta
+    real y pudo calcular su desplazamiento entre frames — la fuente más
+    confiable, porque es una tormenta vista de verdad, no una suposición a
+    partir del viento del pronóstico."""
+    lat_actual = resultado_radar["lat_actual"]
+    lon_actual = resultado_radar["lon_actual"]
+    velocidad_kmh = resultado_radar["velocidad_kmh"]
+    rumbo = resultado_radar["rumbo_grados"]
+
+    abrev, nombre = compass_es(rumbo)
+    etas = agente_geo.calcular_etas(lat_actual, lon_actual, velocidad_kmh)
+
+    nota_estacionaria = None
+    if velocidad_kmh < 2:
+        nota_estacionaria = "El sistema se mueve muy poco o está estacionario; no se puede estimar una hora de llegada confiable."
+
+    return {
+        "ok": True,
+        "hay_actividad_detectada": True,
+        "zona_actual_aproximada": _zona_mas_cercana(lat_actual, lon_actual),
+        "rumbo_grados": rumbo,
+        "rumbo_compass": f"{nombre} ({abrev})",
+        "velocidad_estim_kmh": velocidad_kmh,
+        "fuente": "Radar RMA1 (SINARAME), vía OHMC — producto COLMAX",
+        "degraded": False,
+        "etas_por_zona": etas,
+        "frames_usados": resultado_radar["frames_usados"],
+        "nota": (
+            nota_estacionaria or
+            "Trayectoria calculada comparando la posición real detectada por el radar "
+            "entre los últimos frames (nowcasting lineal simple). Estimación propia, no oficial."
+        ),
+    }
+
+
 @app.route('/api/storm-trajectory', methods=['GET'])
 def storm_trajectory():
-    """Deriva una trayectoria aproximada a partir del viento en altura del
-    pronóstico (dirección + velocidad), con el mismo esquema de respaldo que
-    /api/live-weather: Open-Meteo primero, MET Norway si falla."""
+    """Trayectoria de tormenta, en capas de confiabilidad decreciente:
+    1) Radar real RMA1 (OHMC) — si detecta una tormenta y puede trackearla.
+    2) Viento en altura de Open-Meteo — aproximación cuando no hay señal
+       de radar o el endpoint (no oficial) de OHMC falla.
+    3) Viento en altura de MET Norway — si también falla Open-Meteo.
+    """
     now_ts = time.time()
     if _trajectory_cache["data"] is not None and (now_ts - _trajectory_cache["ts"]) < CACHE_TTL_TRAJECTORY:
         return jsonify(_trajectory_cache["data"])
 
     now = datetime.now(arg_tz)
     error_primario = None
+    sin_senal_radar = None
+
+    try:
+        resultado_radar = agente_radar.analizar_trayectoria()
+        trajectory_data = _armar_trayectoria_radar(resultado_radar)
+        _trajectory_cache["data"] = trajectory_data
+        _trajectory_cache["ts"] = now_ts
+        return jsonify(trajectory_data)
+    except SinSenalDeRadar as e:
+        # No es una falla: el radar respondió bien, simplemente no hay
+        # lluvia detectable ahora. Igual probamos el viento del pronóstico,
+        # pero lo anotamos para el diagnóstico si todo lo demás falla.
+        sin_senal_radar = str(e)
+    except Exception as e_radar:
+        # El endpoint no oficial de OHMC puede cambiar o caerse sin aviso;
+        # seguimos de largo al plan B sin romper la respuesta.
+        sin_senal_radar = f"Radar OHMC no disponible: {e_radar}"
 
     try:
         raw_data = agente_meteo.obtener_estado_actual()
@@ -383,6 +459,8 @@ def storm_trajectory():
         trajectory_data = _armar_trayectoria(
             velocidad, direccion, f"Open-Meteo (viento a {nivel})", False, hay_actividad
         )
+        if sin_senal_radar:
+            trajectory_data["radar_info"] = sin_senal_radar
         _trajectory_cache["data"] = trajectory_data
         _trajectory_cache["ts"] = now_ts
         return jsonify(trajectory_data)
@@ -400,13 +478,18 @@ def storm_trajectory():
         trajectory_data = _armar_trayectoria(
             velocidad, direccion, "MET Norway (respaldo, viento a 10m)", True, hay_actividad
         )
+        if sin_senal_radar:
+            trajectory_data["radar_info"] = sin_senal_radar
         _trajectory_cache["data"] = trajectory_data
         _trajectory_cache["ts"] = now_ts
         return jsonify(trajectory_data)
     except Exception as e_respaldo:
         return jsonify({
             "ok": False,
-            "error": f"Open-Meteo: {error_primario} | MET Norway: {e_respaldo}",
+            "error": (
+                f"Radar OHMC: {sin_senal_radar} | "
+                f"Open-Meteo: {error_primario} | MET Norway: {e_respaldo}"
+            ),
         }), 500
 
 
